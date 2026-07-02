@@ -501,8 +501,23 @@ classdef tPopupView < matlab.uitest.TestCase
                 if isempty(view.InputDialog) || ~isvalid(view.InputDialog)
                     return
                 end
-                testCase.type(view.InputField, typedValue);
-                testCase.press(view.InputOkButton);
+                try
+                    testCase.type(view.InputField, typedValue);
+                    testCase.press(view.InputOkButton);
+                catch err
+                    % A failure here must not hang requestInput forever
+                    % (a claimed request disables its timeout). Resolve
+                    % via the dialog's close path (supplies the default)
+                    % and surface the real error in the log; the value
+                    % assertion below then fails informatively.
+                    stop(t);
+                    fprintf(2, "typeAndSubmit failed: %s\n", err.message);
+                    if ~isempty(view.InputDialog) && isvalid(view.InputDialog)
+                        cr = view.InputDialog.CloseRequestFcn;
+                        cr(view.InputDialog, []);
+                    end
+                    return
+                end
                 stop(t);
             end
         end

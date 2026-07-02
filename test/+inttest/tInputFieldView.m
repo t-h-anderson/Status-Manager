@@ -159,12 +159,25 @@ classdef tInputFieldView < matlab.unittest.TestCase
             testCase.verifyEqual(value, typedValue)
 
             function fillAndSubmit()
-                if isempty(view.PendingStatus) || ~isvalid(view.PendingStatus)
+                status = view.PendingStatus;
+                if isempty(status) || ~isvalid(status)
                     return
                 end
-                view.Field.Value = typedValue;
-                cb = view.OkButton.ButtonPushedFcn;
-                cb(view.OkButton, []);
+                try
+                    view.Field.Value = typedValue;
+                    cb = view.OkButton.ButtonPushedFcn;
+                    cb(view.OkButton, []);
+                catch err
+                    % Never hang requestInput (a claimed request has no
+                    % timeout): resolve directly and surface the error.
+                    stop(t);
+                    fprintf(2, "fillAndSubmit failed: %s\n", err.message);
+                    if isvalid(status) && ~status.IsComplete
+                        status.transitionInputState( ...
+                            statusMgr.StatusType.ValueSupplied, "driver-error");
+                    end
+                    return
+                end
                 stop(t);
             end
         end
