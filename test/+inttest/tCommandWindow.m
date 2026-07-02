@@ -37,7 +37,10 @@ classdef tCommandWindow < matlab.uitest.TestCase
             testCase.CommandWindowView.ShowInfo = false;
             testCase.Stack.addStatus("Info", Message="i2");
             testCase.verifyFalse(testCase.CommandWindowView.ShowInfo)
-            testCase.verifyEqual(testCase.CommandWindowView.IncomingStatus.Message, "i2");
+            % IncomingStatus holds the status the view chose to display.
+            % With ShowInfo off nothing on the stack is displayable here
+            % (Idle below is ShowIdle=false), so it is empty.
+            testCase.verifyEmpty(testCase.CommandWindowView.IncomingStatus);
             % "i2" was suppressed by ShowInfo=false, so PreviousMessage
             % keeps tracking the last *displayed* message ("i1"). This
             % is what the dot-collapse logic in writeToTerminal needs.
