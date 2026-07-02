@@ -115,7 +115,7 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
             obj.popupAlert(status, "Info", "info");
         end
 
-        function displayIdle(obj, varargin)
+        function displayIdle(~, ~)
             % Do nothing
         end
 
@@ -237,7 +237,7 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
     end
 
     methods (Access = protected)
-        function completeIfClicked(obj, src, event, status)
+        function completeIfClicked(obj, ~, event, status)
             % CloseFcn fires for every dismissal route uiconfirm
             % surfaces (button click, Esc, window X), so always
             % drop the flag here rather than gating on HasPopup.
@@ -326,7 +326,7 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
             tf = ~isempty(obj.ProgressDlg) && isvalid(obj.ProgressDlg);
         end
 
-        function tf = isProgressDlgNeeded(obj, status)
+        function tf = isProgressDlgNeeded(~, status)
             tf = (status.Type == statusMgr.StatusType.Running || ...
                 status.Type == statusMgr.StatusType.RunningCancellable);
         end
@@ -348,12 +348,11 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
         end
     end % methods
 
-    methods (Static)
+    methods (Access = protected)
 
-        function num = numberDialogues(stack)
+        function num = numberDialogues(obj, stack)
             statusTypes = [stack.Statuses.Type];
-            popupTypes = [statusMgr.StatusType.Error, statusMgr.StatusType.Warning, statusMgr.StatusType.Success];
-            idx = ismember(statusTypes, popupTypes);
+            idx = ismember(statusTypes, obj.AlertStatusTypes);
             num = sum(idx);
         end
 

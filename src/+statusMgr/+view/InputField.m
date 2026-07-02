@@ -1,4 +1,4 @@
-classdef InputField < statusMgr.internal.view.StatusViewBase
+classdef InputField < statusMgr.internal.view.StatusSinkViewBase
     %INPUTFIELD Inline, non-modal status line with an embedded edit field.
     %
     % Renders the current status as a single-line message inside a
@@ -84,9 +84,9 @@ classdef InputField < statusMgr.internal.view.StatusViewBase
         function buildUI(obj)
             % A two-row grid: prompt label across the top (only visible
             % while collecting input), field + OK button on the bottom row.
-            obj.Layout = uigridlayout(obj.Parent, [2 2], ...
-                "ColumnWidth", {'1x', 'fit'}, ...
-                "RowHeight", {'fit', 'fit'}, ...
+            obj.Layout = uigridlayout(obj.Parent, [2, 2], ...
+                "ColumnWidth", {"1x", "fit"}, ...
+                "RowHeight", {"fit", "fit"}, ...
                 "Padding", [4 4 4 4], "RowSpacing", 4);
 
             obj.PromptLabel = uilabel(obj.Layout, "Text", "", ...
@@ -107,20 +107,19 @@ classdef InputField < statusMgr.internal.view.StatusViewBase
             obj.OkButton.Layout.Column = 2;
         end
 
-        function showMessage(obj, status)
+        function displayStatus(obj, status, ~)
             % Display a status's message in the read-only field and make
             % sure no stale input widgets are showing.
+            arguments
+                obj (1,1) statusMgr.view.InputField
+                status (1,1) statusMgr.Status
+                ~
+            end
             obj.PromptLabel.Visible = "off";
             obj.OkButton.Visible = "off";
             obj.Field.Editable = "off";
             obj.Field.Value = status.Message;
         end
-
-        function displayInfo(obj, status);            obj.showMessage(status); end %#ok<*MANU>
-        function displayRunning(obj, status, ~);      obj.showMessage(status); end
-        function displayError(obj, status);           obj.showMessage(status); end
-        function displayWarning(obj, status);         obj.showMessage(status); end
-        function displaySuccess(obj, status);         obj.showMessage(status); end
 
         function displayIdle(obj, ~)
             % Idle clears the line back to an empty, read-only field.
@@ -141,7 +140,13 @@ classdef InputField < statusMgr.internal.view.StatusViewBase
             obj.PendingStatus = status;
             obj.PromptLabel.Text = prompt;
             obj.PromptLabel.Visible = "on";
+
+            valueChangedFcn = obj.Field.ValueChangedFcn;
+            obj.Field.ValueChangedFcn = [];
+            restoreValueChangedFcn = onCleanup(@() set(obj.Field, ...
+                "ValueChangedFcn", valueChangedFcn));
             obj.Field.Value = string(status.Data);
+
             obj.Field.Editable = "on";
             obj.OkButton.Visible = "on";
         end

@@ -441,8 +441,7 @@ classdef Stack < statusMgr.internal.StackInterface
 
             msg = nvp.Message;
             if msg == ""
-                msg = "Running: " + eraseBetween(func2str(fcnHandle), ...
-                    textBoundary, ")", "Boundaries", "inclusive");
+                msg = "Running: " + statusMgr.Stack.functionLabel(fcnHandle);
             end
 
             future = parfeval(nvp.Pool, fcnHandle, nvp.NumOutputs, nvp.Args{:});
@@ -533,10 +532,8 @@ classdef Stack < statusMgr.internal.StackInterface
             %                       work uses this to read IsComplete)
             %   fcnArgs (cell)    - positional args from the caller
 
-            fcnCallStr = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
-                "Boundaries", "inclusive");
             [status, statusCleanup] = obj.addStatus(statusType, ...
-                "Message", "Running: " + fcnCallStr); %#ok<ASGLU>
+                "Message", "Running: " + statusMgr.Stack.functionLabel(fcnHandle)); %#ok<ASGLU>
 
             % WarningCapture silences warnings, sets a sentinel via
             % lastwarn, and restores the prior warning state on delete.
@@ -593,7 +590,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 Message=prompt, ...
                 Title=nvp.Title, ...
                 Data=nvp.DefaultValue);
-            cleanupStatus = onCleanup(@() obj.removeStatus(status)); %#ok<NASGU>
+            cleanupStatus = onCleanup(@() obj.removeStatus(status));
 
             % If no view has claimed the request after Timeout seconds,
             % auto-resolve with the default value. The handler is a no-op
@@ -604,7 +601,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 "StartDelay", nvp.Timeout, ...
                 "ExecutionMode", "singleShot", ...
                 "TimerFcn", @(~,~) statusMgr.Stack.resolveOnTimeout(weakStatus, nvp.DefaultValue));
-            cleanupTimer = onCleanup(@() statusMgr.util.stopTimer(timeoutTimer)); %#ok<NASGU>
+            cleanupTimer = onCleanup(@() statusMgr.util.stopTimer(timeoutTimer));
             start(timeoutTimer);
 
             % Block until the status is resolved. A view supplying a value
@@ -738,13 +735,13 @@ classdef Stack < statusMgr.internal.StackInterface
                 @(s,e) statusMgr.Stack.onStatusCompletedFromWeak(weakStack, s, e));
         end
 
-        function onStatusCompleted(obj, s, e)
+        function onStatusCompleted(obj, s, ~)
             idx = isvalid(obj);
             obj = obj(idx);
             obj.removeStatus(s);
         end
 
-        function onMonitorableStatusChanged(obj, s, e)
+        function onMonitorableStatusChanged(obj, ~, e)
             status = e.Status;
             obj.add(status);
         end
@@ -831,14 +828,18 @@ classdef Stack < statusMgr.internal.StackInterface
             elseif isstring(value) || (ischar(value) && (isrow(value) || isempty(value)))
                 stack.updateStatus(status, "Message", string(value));
             elseif isstruct(value)
-                args = {};
+                args = cell(1, 4);
+                nArgs = 0;
                 if isfield(value, "Value")
-                    args = [args, {"Value", double(value.Value)}];
+                    args(nArgs + (1:2)) = {"Value", double(value.Value)};
+                    nArgs = nArgs + 2;
                 end
                 if isfield(value, "Message")
-                    args = [args, {"Message", string(value.Message)}];
+                    args(nArgs + (1:2)) = {"Message", string(value.Message)};
+                    nArgs = nArgs + 2;
                 end
-                if ~isempty(args)
+                if nArgs > 0
+                    args = args(1:nArgs);
                     stack.updateStatus(status, args{:});
                 else
                     warning("statusMgr:Stack:unhandledProgressValue", ...
@@ -862,6 +863,11 @@ classdef Stack < statusMgr.internal.StackInterface
             if isvalid(future) && ismember(string(future.State), ["queued", "running"])
                 cancel(future);
             end
+        end
+
+        function label = functionLabel(fcnHandle)
+            label = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
+                "Boundaries", "inclusive");
         end
 
     end
