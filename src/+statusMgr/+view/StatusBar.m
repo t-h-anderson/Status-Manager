@@ -243,12 +243,9 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
                 alerts = statusMgr.Status.empty(1,0);
                 return
             end
-            alertTypes = [statusMgr.StatusType.Error, ...
-                statusMgr.StatusType.Warning, ...
-                statusMgr.StatusType.Success];
             statuses = obj.Stack.Statuses;
             types = [statuses.Type];
-            alerts = statuses(ismember(types, alertTypes));
+            alerts = statuses(ismember(types, obj.AlertStatusTypes));
         end
 
         function html = buildAlertsHtml(obj, alerts)
@@ -318,13 +315,10 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
         end
 
         function setProgress(obj, visible, value)
+            obj.setControlVisible(obj.ProgressIndicator, 2, visible, 100);
             if ~visible
-                obj.ProgressIndicator.Visible = "off";
-                obj.Layout.ColumnWidth{2} = 0;
                 return
             end
-            obj.ProgressIndicator.Visible = "on";
-            obj.Layout.ColumnWidth{2} = 100;
             if isnan(value)
                 obj.ProgressIndicator.Indeterminate = "on";
             else
@@ -334,33 +328,15 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
         end
 
         function setCancelVisible(obj, visible)
-            if visible
-                obj.CancelButton.Visible = "on";
-                obj.Layout.ColumnWidth{3} = 70;
-            else
-                obj.CancelButton.Visible = "off";
-                obj.Layout.ColumnWidth{3} = 0;
-            end
+            obj.setControlVisible(obj.CancelButton, 3, visible, 70);
         end
 
         function setOkVisible(obj, visible)
-            if visible
-                obj.OkButton.Visible = "on";
-                obj.Layout.ColumnWidth{5} = 50;
-            else
-                obj.OkButton.Visible = "off";
-                obj.Layout.ColumnWidth{5} = 0;
-            end
+            obj.setControlVisible(obj.OkButton, 5, visible, 50);
         end
 
         function setCloseAllVisible(obj, visible)
-            if visible
-                obj.CloseAllButton.Visible = "on";
-                obj.Layout.ColumnWidth{6} = 80;
-            else
-                obj.CloseAllButton.Visible = "off";
-                obj.Layout.ColumnWidth{6} = 0;
-            end
+            obj.setControlVisible(obj.CloseAllButton, 6, visible, 80);
         end
 
         function setDetails(obj, text)
@@ -371,14 +347,22 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
             % linger after the alert is gone.
             obj.PopoutText.HTMLSource = text;
             if text == ""
-                obj.DetailsButton.Visible = "off";
-                obj.Layout.ColumnWidth{4} = 0;
+                obj.setControlVisible(obj.DetailsButton, 4, false, 30);
                 if obj.Popout.IsOpen
                     obj.Popout.close();
                 end
             else
-                obj.DetailsButton.Visible = "on";
-                obj.Layout.ColumnWidth{4} = 30;
+                obj.setControlVisible(obj.DetailsButton, 4, true, 30);
+            end
+        end
+
+        function setControlVisible(obj, control, column, visible, width)
+            if visible
+                control.Visible = "on";
+                obj.Layout.ColumnWidth{column} = width;
+            else
+                control.Visible = "off";
+                obj.Layout.ColumnWidth{column} = 0;
             end
         end
 

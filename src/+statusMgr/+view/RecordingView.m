@@ -1,4 +1,4 @@
-classdef RecordingView < statusMgr.internal.view.StatusViewBase
+classdef RecordingView < statusMgr.internal.view.StatusSinkViewBase
     %RECORDINGVIEW Capture every status update from a Stack.
     %
     % A non-rendering view that materialises every Status it sees into
@@ -88,17 +88,22 @@ classdef RecordingView < statusMgr.internal.view.StatusViewBase
 
     methods (Access = protected)
 
-        function record(obj, status)
+        function displayStatus(obj, status, ~)
+            arguments
+                obj (1,1) statusMgr.view.RecordingView
+                status (1,1) statusMgr.Status
+                ~
+            end
             obj.Rows{end+1} = status.table();
         end
 
-        function displayInfo(obj, status);     obj.record(status); end %#ok<*MANU>
-        function displayRunning(obj, status, ~); obj.record(status); end
-        function displayError(obj, status);    obj.record(status); end
-        function displayWarning(obj, status);  obj.record(status); end
-        function displaySuccess(obj, status);  obj.record(status); end
-        function displayIdle(obj, status);     obj.record(status); end
-        function handleInputRequest(obj, status); obj.record(status); end
+        function handleInputRequest(obj, status)
+            arguments
+                obj (1,1) statusMgr.view.RecordingView
+                status (1,1) statusMgr.Status
+            end
+            obj.displayStatus(status, false);
+        end
 
     end
 

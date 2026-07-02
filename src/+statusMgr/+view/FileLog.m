@@ -1,4 +1,4 @@
-classdef FileLog < statusMgr.internal.view.StatusViewBase
+classdef FileLog < statusMgr.internal.view.StatusSinkViewBase
     %FILELOG Append statuses to a log file.
     %
     % Two output formats are supported:
@@ -82,52 +82,11 @@ classdef FileLog < statusMgr.internal.view.StatusViewBase
     end
 
     methods (Access = protected)
-        function displayRunning(obj, status, ~)
+        function displayStatus(obj, status, ~)
             arguments
                 obj (1,1) statusMgr.view.FileLog
                 status (1,1) statusMgr.Status
                 ~ % No cancellable option for a file log
-            end
-            obj.writeToFile(status);
-        end
-
-        function displayError(obj, status)
-            arguments
-                obj (1,1) statusMgr.view.FileLog
-                status (1,1) statusMgr.Status
-            end
-
-            obj.writeToFile(status);
-        end
-
-        function displayWarning(obj, status)
-            arguments
-                obj (1,1) statusMgr.view.FileLog
-                status (1,1) statusMgr.Status
-            end
-            obj.writeToFile(status);
-        end
-
-        function displaySuccess(obj, status)
-            arguments
-                obj (1,1) statusMgr.view.FileLog
-                status (1,1) statusMgr.Status
-            end
-            obj.writeToFile(status);
-        end
-
-        function displayInfo(obj, status)
-            arguments
-                obj (1,1) statusMgr.view.FileLog
-                status (1,1) statusMgr.Status
-            end
-            obj.writeToFile(status);
-        end
-
-        function displayIdle(obj, status)
-            arguments
-                obj (1,1) statusMgr.view.FileLog
-                status (1,1) statusMgr.Status
             end
             obj.writeToFile(status);
         end
