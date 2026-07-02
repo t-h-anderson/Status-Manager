@@ -1,5 +1,5 @@
 function installStatusManager(nvp)
-% Install method to make sure appStatus is installed and up-to-date
+% Install method to make sure Status Manager is installed and up-to-date
 % Include in other projects' startup to automatically install this
 % dependency
 % Note: Add default toolbox path is "dependencies" folder
@@ -9,22 +9,24 @@ arguments
     nvp.ToolboxPath = "./dependencies";
 end
 
-requiredVersion= nvp.RequiredVersion;
+toolboxName = "Status Manager";
+toolboxNamesToMatch = [toolboxName, "StatusManager"];
+requiredVersion = nvp.RequiredVersion;
 
 % Get installed toolbox version
 toolboxes = matlab.addons.toolbox.installedToolboxes;
 toolboxNames = string({toolboxes.Name});
-installedIdx = contains(toolboxNames, "appStatus");
+installedIdx = ismember(toolboxNames, toolboxNamesToMatch);
 
-if any(installedIdx) 
-    installedVersion = toolboxes(installedIdx).Version;
+if any(installedIdx)
+    installedVersion = string({toolboxes(installedIdx).Version});
 else
     installedVersion = "";
 end
 
 % Return if toolbox is installed and it matches the required version
-if any(installedIdx) && installedVersion == requiredVersion
-    fprintf("appStatus (Ver. %s) matches requirement.\n", requiredVersion);
+if any(installedIdx) && any(installedVersion == requiredVersion)
+    fprintf("%s (Ver. %s) matches requirement.\n", toolboxName, requiredVersion);
     return
 end
 
@@ -33,7 +35,8 @@ tbxPath = fullfile(nvp.ToolboxPath, "*.mltbx");
 tbxs = dir(tbxPath);
 
 if isempty(tbxs)
-    error("No appStatus toolboxes available in %s", nvp.ToolboxPath);
+    error("statusMgr:installStatusManager:noToolboxes", ...
+        "No %s toolboxes available in %s.", toolboxName, nvp.ToolboxPath);
 end
 
 % Get list of available versions
@@ -41,25 +44,28 @@ vers = arrayfun(@(x) string(matlab.addons.toolbox.toolboxVersion(fullfile(x.fold
 
 if requiredVersion == ""
     % If specific version isn't required get latest
-    [maxVersion, idx] = maxVer(vers);    
-    
-    if maxVersion == installedVersion
-        fprintf("appStatus up-to-date (Ver. %s).\n", maxVersion);
+    [~, idx] = maxVer(vers);
+    idx = find(idx, 1, "first");
+    maxVersion = vers(idx);
+
+    if any(maxVersion == installedVersion)
+        fprintf("%s up-to-date (Ver. %s).\n", toolboxName, maxVersion);
         return
     end
 else
-    idx = (vers == requiredVersion);
-    
-    if ~any(idx)
-        error("appStatus (Ver. %s) not found in %s.", nvp.RequiredVersion, nvp.ToolboxPath)
-    end 
+    idx = find(vers == requiredVersion, 1, "first");
+
+    if isempty(idx)
+        error("statusMgr:installStatusManager:versionNotFound", ...
+            "%s (Ver. %s) not found in %s.", toolboxName, nvp.RequiredVersion, nvp.ToolboxPath);
+    end
 end
-    
+
 tbxName = tbxs(idx).name;
 latestTbxPath = fullfile(tbxs(idx).folder, tbxName);
 
 matlab.addons.toolbox.installToolbox(latestTbxPath);
-fprintf("appStatus (Ver. %s) installed.\n", vers(idx));
+fprintf("%s (Ver. %s) installed.\n", toolboxName, vers(idx));
 
 end
 

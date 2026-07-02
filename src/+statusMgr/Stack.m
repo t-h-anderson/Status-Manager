@@ -413,9 +413,8 @@ classdef Stack < statusMgr.internal.StackInterface
             %   [future, status] = stack.runInBackground(@myFcn, ...
             %       Args={a, b}, NumOutputs=1, Message="Loading data");
             %
-            % Note the calling convention differs from run(): the worker's
-            % arguments are passed as a cell via Args={...} here, whereas
-            % run() takes them positionally (stack.run(@f, a, b)).
+            % The worker's arguments are passed as a cell via Args={...},
+            % matching run().
             %
             % To stream progress, create a DataQueue and pass it both
             % into Args (the worker calls send() on it) and as
@@ -868,4 +867,3 @@ classdef Stack < statusMgr.internal.StackInterface
     end
 
 end
-

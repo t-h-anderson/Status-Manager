@@ -40,7 +40,7 @@ classdef (Abstract) StackInterface < handle
         % Monitoring
         monitor(obj, monitorable)
 
-        run(obj, fcnHandle, varargin)
+        run(obj, fcnHandle, nvp)
 
         % User input
         value = requestInput(obj, prompt, nvp)
@@ -50,4 +50,3 @@ classdef (Abstract) StackInterface < handle
     end
 
 end
-
