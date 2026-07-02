@@ -3,11 +3,14 @@ classdef (Abstract) StatusViewBase < ...
         & matlab.mixin.SetGet
     %STATUSVIEWBASE Shared implementation for concrete status views.
     %
-    % Provides the Stack/StackListener storage, the standardDisplay
-    % dispatch loop, and the per-StatusType dispatcher methods that
-    % gate on the Show* flags. Concrete views (Popup, CommandWindow,
-    % FileLog) implement the abstract display methods declared at the
-    % bottom of this file.
+    % Provides the Stack/StackListener storage and the standardDisplay
+    % loop, which scans the stack for the topmost status passing this
+    % view's shouldDisplay gate (MinLevel verbosity threshold, identifier
+    % Include/Exclude filters, and the per-type Show* flags, all AND-ed)
+    % and dispatches it — or falls back to clearDisplay when nothing is
+    % displayable. Concrete views (Popup, CommandWindow, FileLog)
+    % implement the abstract display methods declared at the bottom of
+    % this file.
 
     properties (SetAccess = protected)
         Stack = statusMgr.Stack.empty(1,0)
@@ -31,6 +34,15 @@ classdef (Abstract) StatusViewBase < ...
         ShowSuccess (1,1) logical = true
         ShowIdle (1,1) logical = false
         HandleInputRequests (1,1) logical = true
+
+        % Verbosity threshold: only statuses with Level >= MinLevel are
+        % displayed. Defaults to Trace (show everything), so verbosity
+        % is strictly opt-in. Complements the Show* flags: MinLevel is
+        % the coarse verbosity knob, Show* is surgical per-type control;
+        % both must pass. Input requests are exempt (control flow, not
+        % verbosity) — they are gated by HandleInputRequests and the
+        % identifier filters only.
+        MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
 
         % Per-view identifier filters (glob patterns). Complement the
         % stack-level SuppressedIdentifiers: stack-level hides for
@@ -57,7 +69,16 @@ classdef (Abstract) StatusViewBase < ...
     methods
 
         function standardDisplay(obj)
-            % Method for displaying the status supplied to the Stack manager
+            % Render this view's reaction to the current stack state.
+            %
+            % Scans from the top of the stack for the first status this
+            % view can act on (shouldDisplay), so a status that is
+            % filtered out or below MinLevel for THIS view does not mask
+            % a state change underneath it. If nothing is actionable the
+            % view falls back to its cleared state rather than leaving
+            % the last-rendered status on screen. beforeDisplay() runs on
+            % every update, before either path, so transient running
+            % state (timers, dialogs) is always torn down first.
             arguments
                 obj (1,1)
             end
@@ -66,52 +87,87 @@ classdef (Abstract) StatusViewBase < ...
                 return
             end
 
-            stack = obj.Stack;
-
-            %Get the latest status
-            latestStatus = stack.CurrentStatus;
-
-            if ~latestStatus.IsVisible
-                return
+            statuses = obj.Stack.Statuses;
+            toDisplay = statusMgr.Status.empty(1,0);
+            isInputRequest = false;
+            for i = numel(statuses):-1:1
+                s = statuses(i);
+                switch s.Type
+                    case {statusMgr.StatusType.AwaitingInput, ...
+                            statusMgr.StatusType.ValueSupplied}
+                        % Transitional input states: never displayable,
+                        % never blocking — keep scanning below them.
+                        continue
+                    case statusMgr.StatusType.RequestingInput
+                        % Control flow, not verbosity: exempt from
+                        % MinLevel. A view that doesn't handle input
+                        % skips it and keeps showing the state below
+                        % while another view collects the value.
+                        if obj.HandleInputRequests ...
+                                && obj.passesIdentifierFilters(s.Identifier)
+                            toDisplay = s;
+                            isInputRequest = true;
+                            break
+                        end
+                    otherwise
+                        if obj.shouldDisplay(s)
+                            toDisplay = s;
+                            break
+                        end
+                end
             end
 
-            if ~obj.passesIdentifierFilters(latestStatus.Identifier)
-                return
-            end
-
-            latestType = latestStatus.Type;
-
-            % Save the status in case this is needed for a view
+            % Save the chosen status in case a view needs it (e.g. the
+            % StatusBar buttons complete IncomingStatus).
             obj.PreviousStatus = obj.IncomingStatus;
-            obj.IncomingStatus = latestStatus;
+            obj.IncomingStatus = toDisplay;
 
             obj.beforeDisplay();
 
-            % Display a pop-up
-            switch latestType
+            if isempty(toDisplay)
+                obj.clearDisplay();
+                return
+            end
+
+            if isInputRequest
+                obj.handleInputRequest(toDisplay);
+                return
+            end
+
+            switch toDisplay.Type
                 case statusMgr.StatusType.Info
-                    obj.displayInfo_(latestStatus);
+                    obj.displayInfo(toDisplay);
                 case statusMgr.StatusType.Running
-                    obj.displayRunning_(latestStatus, false);
+                    obj.displayRunning(toDisplay, false);
                 case statusMgr.StatusType.RunningCancellable
-                    obj.displayRunning_(latestStatus, true);
+                    obj.displayRunning(toDisplay, true);
                 case statusMgr.StatusType.Error
-                    obj.displayError_(latestStatus);
+                    obj.displayError(toDisplay);
                 case statusMgr.StatusType.Warning
-                    obj.displayWarning_(latestStatus);
+                    obj.displayWarning(toDisplay);
                 case statusMgr.StatusType.Success
-                    obj.displaySuccess_(latestStatus);
+                    obj.displaySuccess(toDisplay);
                 case statusMgr.StatusType.Idle
-                    obj.displayIdle_(latestStatus);
-                case statusMgr.StatusType.RequestingInput
-                    obj.handleInputRequest_(latestStatus);
-                case {statusMgr.StatusType.AwaitingInput, statusMgr.StatusType.ValueSupplied}
-                    % Intermediate input states — no display action needed.
+                    obj.displayIdle(toDisplay);
                 otherwise
-                    error("Unknown status type");
+                    error("statusMgr:view:unknownStatusType", ...
+                        "Unknown status type");
             end % switch
 
         end % standardDisplay
+
+        function tf = shouldDisplay(obj, status)
+            % The single display gate: verbosity threshold, identifier
+            % filters, and the per-type Show* flag, all AND-ed. Input
+            % requests are gated separately in standardDisplay.
+            arguments
+                obj (1,1)
+                status (1,1) statusMgr.Status
+            end
+            tf = status.Level >= obj.MinLevel ...
+                && obj.passesIdentifierFilters(status.Identifier) ...
+                && obj.showsType(status.Type);
+        end
 
         function delete(obj)
             delete(obj.StackListener);
@@ -123,6 +179,16 @@ classdef (Abstract) StatusViewBase < ...
             delete(obj.StackListener);
             updateStatusFn = @(src, event) obj.standardDisplay();
             obj.Stack = stack;
+            % Seed the stack's default suppressions into this view's own
+            % excludes. Seeded once at bind time, not read live: after
+            % this the view owns its excludes outright. Union keeps a
+            % rebind idempotent (but note it re-adds stack defaults a
+            % caller removed from the view by hand). Guarded because the
+            % interface doesn't require the property (e.g. stack mocks).
+            if isprop(stack, "SuppressedIdentifiers")
+                obj.ExcludeIdentifiers = reshape(union( ...
+                    obj.ExcludeIdentifiers, stack.SuppressedIdentifiers), 1, []);
+            end
             obj.StackListener = listener(stack, "StatusUpdated", updateStatusFn);
         end
 
@@ -157,39 +223,28 @@ classdef (Abstract) StatusViewBase < ...
             tf = true;
         end
 
-        function displayInfo_(obj, status)
-            if obj.ShowInfo
-                obj.displayInfo(status);
+        function tf = showsType(obj, type)
+            % Map a StatusType onto its per-view Show* flag.
+            arguments
+                obj (1,1)
+                type (1,1) statusMgr.StatusType
             end
-        end
-
-        function displayRunning_(obj, status, cancellable)
-            if obj.ShowRunning
-                obj.displayRunning(status, cancellable);
-            end
-        end
-
-        function displayError_(obj, status)
-            if obj.ShowErrors
-                obj.displayError(status);
-            end
-        end
-
-        function displayWarning_(obj, status)
-            if obj.ShowWarnings
-                obj.displayWarning(status);
-            end
-        end
-
-        function displaySuccess_(obj, status)
-            if obj.ShowSuccess
-                obj.displaySuccess(status);
-            end
-        end
-
-        function displayIdle_(obj, status)
-            if obj.ShowIdle
-                obj.displayIdle(status);
+            switch type
+                case statusMgr.StatusType.Info
+                    tf = obj.ShowInfo;
+                case {statusMgr.StatusType.Running, ...
+                        statusMgr.StatusType.RunningCancellable}
+                    tf = obj.ShowRunning;
+                case statusMgr.StatusType.Error
+                    tf = obj.ShowErrors;
+                case statusMgr.StatusType.Warning
+                    tf = obj.ShowWarnings;
+                case statusMgr.StatusType.Success
+                    tf = obj.ShowSuccess;
+                case statusMgr.StatusType.Idle
+                    tf = obj.ShowIdle;
+                otherwise
+                    tf = false;
             end
         end
 
@@ -197,10 +252,12 @@ classdef (Abstract) StatusViewBase < ...
             % Overload to do something before each display trigger
         end
 
-        function handleInputRequest_(obj, status)
-            if obj.HandleInputRequests
-                obj.handleInputRequest(status);
-            end
+        function clearDisplay(obj) %#ok<MANU>
+            % Called when no status on the stack is displayable for this
+            % view (all filtered out, below MinLevel, or Show*-disabled).
+            % Default no-op: beforeDisplay has already torn down transient
+            % running state. Views that paint persistent state (StatusBar,
+            % InputField) override this to blank their UI.
         end
 
     end

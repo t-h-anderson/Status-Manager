@@ -99,7 +99,10 @@ classdef tRecordingView < matlab.unittest.TestCase
             S.addStatus("Info", Identifier="myapp:db:slow", Message="dropped");
             S.addStatus("Info", Message="no id, dropped");
 
-            testCase.verifyEqual(view.RecordedStatuses.Message, "kept")
+            % Each non-matching push re-renders the topmost displayable
+            % status ("kept"), so it is recorded once per update.
+            testCase.verifyEqual(view.RecordedStatuses.Message, ...
+                ["kept"; "kept"; "kept"])
         end
 
         function tExcludeIdentifiersGlobBlockList(testCase)
@@ -130,7 +133,10 @@ classdef tRecordingView < matlab.unittest.TestCase
             S.addStatus("Info", Identifier="myapp:net:debug", Message="dropped");
             S.addStatus("Info", Identifier="other:net:slow", Message="dropped");
 
-            testCase.verifyEqual(view.RecordedStatuses.Message, "kept")
+            % Each non-matching push re-renders the topmost displayable
+            % status ("kept"), so it is recorded once per update.
+            testCase.verifyEqual(view.RecordedStatuses.Message, ...
+                ["kept"; "kept"; "kept"])
         end
 
         function tRecordsRequestingInputByDefault(testCase)
@@ -147,6 +153,69 @@ classdef tRecordingView < matlab.unittest.TestCase
             S.requestInput("Need value", DefaultValue="x", Timeout=0.1);
 
             testCase.verifyTrue(any(view.RecordedStatuses.Type == "RequestingInput"))
+        end
+
+        % --- Level / verbosity gating (issue #59) ---------------------------
+
+        function tMinLevelGatesVerbosity(testCase)
+            % One stack, two verbosities: the terse view records only
+            % Warning-and-above, the default view records everything.
+            S = statusMgr.Stack();
+            terse = statusMgr.view.RecordingView(S, MinLevel="Warning");
+            testCase.addTeardown(@() delete(terse))
+            verbose = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(verbose))
+
+            S.addStatus("Info", Message="detail");
+            S.addStatus("Error", Message="boom");
+
+            testCase.verifyEqual(terse.RecordedStatuses.Message, "boom")
+            testCase.verifyEqual(verbose.RecordedStatuses.Message, ...
+                ["detail"; "boom"])
+        end
+
+        function tRunningDefaultsToNotice(testCase)
+            % Running marks a key state (the app may be unresponsive), so
+            % it defaults to Notice: visible at MinLevel=Notice, hidden
+            % at MinLevel=Warning.
+            S = statusMgr.Stack();
+            atNotice = statusMgr.view.RecordingView(S, MinLevel="Notice");
+            testCase.addTeardown(@() delete(atNotice))
+            atWarning = statusMgr.view.RecordingView(S, MinLevel="Warning");
+            testCase.addTeardown(@() delete(atWarning))
+
+            S.addStatus("Running", Message="busy");
+
+            testCase.verifyEqual(atNotice.RecordedStatuses.Message, "busy")
+            testCase.verifyEmpty(atWarning.RecordedStatuses)
+        end
+
+        function tLevelOverridePromotesStatus(testCase)
+            % An explicit Level overrides the type default: a Critical
+            % Info clears an Error-level threshold.
+            S = statusMgr.Stack();
+            view = statusMgr.view.RecordingView(S, MinLevel="Error");
+            testCase.addTeardown(@() delete(view))
+
+            S.addStatus("Info", Message="promoted", Level="Critical");
+
+            testCase.verifyEqual(view.RecordedStatuses.Message, "promoted")
+        end
+
+        function tFilteredTopStatusRevealsStatusBeneath(testCase)
+            % Regression for issue #58: a top status this view filters
+            % out must not mask the state underneath. The view re-renders
+            % the topmost displayable status instead.
+            S = statusMgr.Stack();
+            view = statusMgr.view.RecordingView(S, ...
+                ExcludeIdentifiers="noise:*");
+            testCase.addTeardown(@() delete(view))
+
+            S.addStatus("Running", Identifier="app:load", Message="loading");
+            S.addStatus("Info", Identifier="noise:debug", Message="chatter");
+
+            testCase.verifyEqual(view.RecordedStatuses.Message, ...
+                ["loading"; "loading"])
         end
 
     end

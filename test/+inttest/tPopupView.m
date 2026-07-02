@@ -380,10 +380,11 @@ classdef tPopupView < matlab.uitest.TestCase
             testCase.verifyEqual(newStack.CurrentStatus.Value, 0.5)
         end
 
-        function tNonVisibleStatus(testCase)
-            % Setting the status as non-visible makes it not appear as a popup
-            testCase.Stack.addStatus("Warning", IsVisible=false);
-            
+        function tBelowMinLevelStatus(testCase)
+            % A status below the view's MinLevel does not appear as a popup.
+            testCase.PopupView.MinLevel = "Info";
+            testCase.Stack.addStatus("Warning", Level="Trace");
+
             testCase.verifyError(@() testCase.chooseDialog("uiconfirm", testCase.Figure, "OK"), ...
                 "MATLAB:uiautomation:Driver:NoConfirmationDialogsFound")
         end

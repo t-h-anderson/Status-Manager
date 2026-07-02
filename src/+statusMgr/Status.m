@@ -4,6 +4,10 @@ classdef Status < matlab.mixin.SetGet
     properties (SetAccess = protected)
         Identifier (1,1) string = "" % Semantic identified, for filtering/suppression
         Type (1,1) statusMgr.StatusType = statusMgr.StatusType.Idle
+        % Ordered importance, used by views for verbosity gating
+        % (status.Level >= view.MinLevel). Defaults from Type via
+        % statusMgr.Level.defaultFor; override with the Level= nvp.
+        Level (1,1) statusMgr.Level = statusMgr.Level.Trace
         % Message is the canonical text. Views render Message by default;
         % MessageShort is an optional shorter form that views with limited
         % space may prefer (e.g. the StatusBar's inline alert label, or a
@@ -29,10 +33,6 @@ classdef Status < matlab.mixin.SetGet
         IsComplete (1,1) logical = false
     end
 
-    properties (SetObservable)
-        IsVisible (1,1) logical = true
-    end
-
     properties (SetAccess = protected, Hidden)
         ID (1,1) string = "" % unique ID
     end
@@ -51,7 +51,9 @@ classdef Status < matlab.mixin.SetGet
                 nvp.Title (1,1) string = ""
                 nvp.Identifier (1,1) string = ""
                 nvp.Value (1,1) double = NaN
-                nvp.IsVisible (1,1) logical = true
+                % Empty sentinel: when no Level is given, derive it from
+                % the status type after `condition` is known.
+                nvp.Level (1,:) statusMgr.Level {mustBeScalarOrEmpty} = statusMgr.Level.empty(1,0)
                 nvp.IsTemporary (1,1) logical = false
                 nvp.Data
                 nvp.MessageShort (1,1) string = string(NaN)
@@ -71,6 +73,14 @@ classdef Status < matlab.mixin.SetGet
 
             obj.Type = condition;
             obj.Message = message;
+
+            if isempty(nvp.Level)
+                obj.Level = statusMgr.Level.defaultFor(condition);
+            else
+                obj.Level = nvp.Level;
+            end
+            nvp = rmfield(nvp, "Level");
+
             set(obj, nvp);
         end
 
@@ -168,17 +178,17 @@ classdef Status < matlab.mixin.SetGet
 
             if isempty(objs)
                 % CSL expansion on an empty array drops type info
-                % (e.g. [objs.IsVisible] -> double []), so seed the
+                % (e.g. [objs.Value] -> double []), so seed the
                 % schema explicitly. Keeps vertcat with later non-
                 % empty rows from coercing column types.
                 tbl = table( ...
                     'Size', [0 13], ...
                     'VariableTypes', {'string','string','string', ...
-                        'datetime','string','logical','string', ...
+                        'datetime','string','string','string', ...
                         'string','string','double','cell','logical', ...
                         'logical'}, ...
                     'VariableNames', {'ID','Identifier','Title', ...
-                        'Timestamp','User','IsVisible','Type', ...
+                        'Timestamp','User','Level','Type', ...
                         'Message','MessageShort','Value','Data', ...
                         'IsTemporary','IsComplete'});
                 return
@@ -189,7 +199,7 @@ classdef Status < matlab.mixin.SetGet
             Title        = string([objs.Title])';
             Timestamp    = [objs.Timestamp]';
             User         = string([objs.User])';
-            IsVisible    = [objs.IsVisible]';
+            Level        = string([objs.Level])';
             Type         = string([objs.Type])';
             Message      = string([objs.Message])';
             MessageShort = string([objs.MessageShort])';
@@ -199,7 +209,7 @@ classdef Status < matlab.mixin.SetGet
             IsComplete   = [objs.IsComplete]';
 
             tbl = table(ID, Identifier, Title, Timestamp, User, ...
-                IsVisible, Type, Message, MessageShort, Value, Data, ...
+                Level, Type, Message, MessageShort, Value, Data, ...
                 IsTemporary, IsComplete);
         end
 

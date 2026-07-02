@@ -141,6 +141,34 @@ classdef tInputFieldView < matlab.unittest.TestCase
             testCase.verifyEmpty(testCase.View.PendingStatus)
         end
 
+        function tInputCollectedRegardlessOfMinLevel(testCase)
+            % Input requests are control flow, not verbosity: even a
+            % maximally terse view still collects input.
+            typedValue = "still collected";
+            testCase.View.MinLevel = "Critical";
+            view = testCase.View;
+
+            t = timer("ExecutionMode", "fixedSpacing", "Period", 0.05, ...
+                "TimerFcn", @(~,~) fillAndSubmit());
+            testCase.addTeardown(@() statusMgr.util.stopTimer(t));
+            start(t);
+
+            value = testCase.Stack.requestInput("Enter something", ...
+                DefaultValue="def", Timeout=5);
+
+            testCase.verifyEqual(value, typedValue)
+
+            function fillAndSubmit()
+                if isempty(view.PendingStatus) || ~isvalid(view.PendingStatus)
+                    return
+                end
+                view.Field.Value = typedValue;
+                cb = view.OkButton.ButtonPushedFcn;
+                cb(view.OkButton, []);
+                stop(t);
+            end
+        end
+
     end
 
 end

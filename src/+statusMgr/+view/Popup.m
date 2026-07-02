@@ -47,6 +47,7 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
                 nvp.ShowSuccess (1,1) logical = true
                 nvp.ShowIdle (1,1) logical = false
                 nvp.HandleInputRequests (1,1) logical = true
+                nvp.MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
@@ -332,8 +333,13 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
         end
 
         function checkProgressDlg(obj)
-            status = obj.Stack.CurrentStatus;
-            if ~obj.isProgressDlgNeeded(status)
+            % Keyed off the status this view chose to display
+            % (IncomingStatus, set by standardDisplay before
+            % beforeDisplay), not the raw top of the stack — the top may
+            % be filtered out or below MinLevel for this view.
+            status = obj.IncomingStatus;
+            if isempty(status) || ~isvalid(status) ...
+                    || ~obj.isProgressDlgNeeded(status)
                 obj.deleteProgressDlg();
             end
         end
@@ -351,8 +357,12 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
     methods (Access = protected)
 
         function num = numberDialogues(obj, stack)
-            statusTypes = [stack.Statuses.Type];
-            idx = ismember(statusTypes, obj.AlertStatusTypes);
+            % Count only alerts this view would actually display, so the
+            % "(N alerts)" suffix and Close All option match what the
+            % user can see.
+            statuses = stack.Statuses;
+            idx = ismember([statuses.Type], obj.AlertStatusTypes) ...
+                & arrayfun(@(s) obj.shouldDisplay(s), statuses);
             num = sum(idx);
         end
 

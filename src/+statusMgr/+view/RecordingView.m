@@ -28,7 +28,7 @@ classdef RecordingView < statusMgr.internal.view.StatusSinkViewBase
 
     properties (SetAccess = protected, Dependent)
         % Snapshot rows; the schema is whatever statusMgr.Status.table
-        % returns (ID, Identifier, Title, Timestamp, User, IsVisible,
+        % returns (ID, Identifier, Title, Timestamp, User, Level,
         % Type, Message, MessageShort, Value, Data, IsTemporary,
         % IsComplete). Materialised on read from the per-row cell
         % store — appending to a table on every status would be
@@ -59,11 +59,15 @@ classdef RecordingView < statusMgr.internal.view.StatusSinkViewBase
                 % to fire even when other claim-capable views are also
                 % attached.
                 nvp.HandleInputRequests (1,1) logical = true
+                nvp.MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
-            obj.setStack(stack);
+            % nvp before setStack: setStack seeds the stack's suppressed
+            % identifiers into ExcludeIdentifiers, which set() would
+            % otherwise overwrite.
             set(obj, nvp);
+            obj.setStack(stack);
         end
 
         function tf = isVisible(~)

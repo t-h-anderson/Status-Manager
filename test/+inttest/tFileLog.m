@@ -198,22 +198,29 @@ classdef tFileLog < matlab.uitest.TestCase
             testCase.verifyEqual(lines(5), "")
         end
 
-        function tNonVisibleStatus(testCase)
-            % A status with IsVisible=false is not written to the log file.
+        function tBelowMinLevelNotLogged(testCase)
+            % A status below the view's MinLevel is not written to the
+            % log file.
             import matlab.unittest.constraints.IsFile
-            testCase.Stack.addStatus("Warning", Message="hidden", IsVisible=false);
+            testCase.FileLogView.MinLevel = "Info";
+            testCase.Stack.addStatus("Warning", Message="hidden", Level="Trace");
             logfile = fullfile(testCase.FileLogView.LogFolder, testCase.FileLogView.LogFilename);
             testCase.verifyThat(logfile, ~IsFile)
         end
 
         function tSuppressedIdentifier(testCase)
-            % A status whose identifier is suppressed on the stack is not
-            % written to the log file.
+            % Stack suppression seeds the excludes of views bound after
+            % the call: a fresh view does not log the identifier.
             import matlab.unittest.constraints.IsFile
-            testCase.Stack.suppressIdentifier("my:id");
-            testCase.Stack.addStatus("Warning", Identifier="my:id", Message="suppressed");
-            logfile = fullfile(testCase.FileLogView.LogFolder, testCase.FileLogView.LogFilename);
-            testCase.verifyThat(logfile, ~IsFile)
+            S = statusMgr.Stack();
+            S.suppressIdentifier("my:id");
+            view = statusMgr.view.FileLog(S, LogFolder=testCase.Folder, ...
+                LogFilename="suppressed_test.txt");
+            testCase.addTeardown(@() delete(view))
+
+            S.addStatus("Warning", Identifier="my:id", Message="suppressed");
+
+            testCase.verifyThat(fullfile(testCase.Folder, "suppressed_test.txt"), ~IsFile)
         end
 
         function tDisplayIdle(testCase)

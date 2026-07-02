@@ -121,7 +121,7 @@ function doSlowWork(status)
 end
 %%
 %[text] ## Suppressing identifiers
-%[text] Suppress noisy statuses by identifier. Glob patterns (`*`) match across colons, so namespace-prefixed identifiers are easy to filter:
+%[text] Suppress noisy statuses by identifier. Glob patterns (`*`) match across colons, so namespace-prefixed identifiers are easy to filter. The suppression list is copied into a view's ExcludeIdentifiers when the view binds to the stack, so call suppressIdentifier before creating views (to hide on an existing view, edit its ExcludeIdentifiers). The statuses themselves are always kept on the stack.
 myStack.suppressIdentifier("myapp:network:*")  % everything under myapp:network
 myStack.suppressIdentifier("*timeout*")        % anything mentioning timeout
 myStack.unsuppressIdentifier("myapp:network:*") % must match the entry exactly
@@ -133,12 +133,15 @@ myStack.addStatus("Info", Message="hello");
 recorder.RecordedStatuses.Message(end)  % "hello"
 recorder.clear();  % drop the captured history
 %%
-%[text] ## Per-view filters
-%[text] Every view supports IncludeIdentifiers / ExcludeIdentifiers glob lists. They complement the stack-level suppression: stack-level hides for everyone, view-level lets you tune visibility per view.
+%[text] ## Per-view filters and verbosity
+%[text] Every view supports IncludeIdentifiers / ExcludeIdentifiers glob lists, plus a MinLevel verbosity threshold (Trace \< Debug \< Info \< Notice \< Warning \< Error \< Critical). Each status carries a Level defaulted from its type (Running is Notice; override with Level=). One stack can therefore drive a terse view and a record-everything view side by side. Input requests ignore MinLevel — a terse view still collects input.
 chatty = statusMgr.view.CommandWindow(myStack, ...
     IncludeIdentifiers=["myapp:debug:*"]);
 audit = statusMgr.view.FileLog(myStack, ...
     ExcludeIdentifiers=["*:debug"]);
+terse = statusMgr.view.CommandWindow(myStack, MinLevel="Warning");
+myStack.addStatus("Info", Message="only audit sees this");
+myStack.addStatus("Info", Message="everyone sees this", Level="Critical");
 %%
 %[text] ## Structured / rotating logs
 %[text] FileLog accepts a JSON-lines format and a byte-cap that rotates the log when it grows past MaxBytes. Rotation appends "\_N" before the file extension, e.g. Log.txt → Log\_1.txt → Log\_2.txt.

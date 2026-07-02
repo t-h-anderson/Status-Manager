@@ -39,14 +39,14 @@ classdef tStack < matlab.unittest.TestCase
             S = statusMgr.Stack();
             S.addStatus("Info", Message="t1", Value=10, IsTemporary=true, ...
                 Identifier="id1", Data={1,2}, MessageShort="m1", ...
-                IsVisible=false);
+                Level="Debug");
 
             testCase.verifySize(S.Statuses, [1 2])
             testCase.verifyEqual(S.CurrentStatus.Type, statusMgr.StatusType.Info)
             testCase.verifyEqual(S.CurrentStatus.Message, "t1")
             testCase.verifyEqual(S.CurrentStatus.MessageShort, "m1")
             testCase.verifyTrue(S.CurrentStatus.IsTemporary)
-            testCase.verifyFalse(S.CurrentStatus.IsVisible)
+            testCase.verifyEqual(S.CurrentStatus.Level, statusMgr.Level.Debug)
             testCase.verifyEqual(S.CurrentStatus.Value, 10)
             testCase.verifyEqual(S.CurrentStatus.Identifier, "id1")
             testCase.verifyEqual(S.CurrentStatus.Data, {1,2})
@@ -309,15 +309,34 @@ classdef tStack < matlab.unittest.TestCase
         end
 
         function tSuppressIdentifier(testCase)
-            % A suppressed identifier causes matching statuses to be hidden.
+            % Suppression never mutates statuses: the stack records
+            % everything, and the suppression list is seeded into the
+            % excludes of views bound afterwards.
             S = statusMgr.Stack();
             S.suppressIdentifier("my:id");
+
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
 
             S.addStatus("Warning", Identifier="my:id", Message="suppressed");
             S.addStatus("Warning", Identifier="other:id", Message="visible");
 
-            testCase.verifyFalse(S.Statuses(2).IsVisible)
-            testCase.verifyTrue(S.Statuses(3).IsVisible)
+            testCase.assertSize(S.Statuses, [1 3])   % stack keeps both
+            testCase.verifyTrue(ismember("my:id", view.ExcludeIdentifiers))
+            testCase.verifyEqual(view.RecordedStatuses.Message, "visible")
+        end
+
+        function tSuppressAfterBindDoesNotAffectExistingView(testCase)
+            % Seeding happens at bind time only: a view attached before
+            % suppressIdentifier keeps displaying the identifier.
+            S = statusMgr.Stack();
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
+
+            S.suppressIdentifier("my:id");
+            S.addStatus("Warning", Identifier="my:id", Message="still recorded");
+
+            testCase.verifyEqual(view.RecordedStatuses.Message, "still recorded")
         end
 
         function tSuppressDuplicateIdentifier(testCase)
@@ -330,16 +349,19 @@ classdef tStack < matlab.unittest.TestCase
         end
 
         function tUnsuppressIdentifier(testCase)
-            % After unsuppressing, newly added statuses with that identifier
-            % are visible again.
+            % After unsuppressing, views bound afterwards are not seeded
+            % with the identifier and display it normally.
             S = statusMgr.Stack();
             S.suppressIdentifier("my:id");
             S.unsuppressIdentifier("my:id");
+            testCase.verifyEmpty(S.SuppressedIdentifiers)
+
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
 
             S.addStatus("Warning", Identifier="my:id", Message="visible again");
 
-            testCase.verifyTrue(S.CurrentStatus.IsVisible)
-            testCase.verifyEmpty(S.SuppressedIdentifiers)
+            testCase.verifyEqual(view.RecordedStatuses.Message, "visible again")
         end
 
         function tSuppressGlobMatchesNamespacePrefix(testCase)
@@ -347,11 +369,13 @@ classdef tStack < matlab.unittest.TestCase
             S = statusMgr.Stack();
             S.suppressIdentifier("myapp:net:*");
 
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
+
             S.addStatus("Warning", Identifier="myapp:net:timeout", Message="hidden");
             S.addStatus("Warning", Identifier="myapp:db:slow", Message="visible");
 
-            testCase.verifyFalse(S.Statuses(2).IsVisible)
-            testCase.verifyTrue(S.Statuses(3).IsVisible)
+            testCase.verifyEqual(view.RecordedStatuses.Message, "visible")
         end
 
         function tSuppressGlobMatchesAnywhere(testCase)
@@ -359,13 +383,14 @@ classdef tStack < matlab.unittest.TestCase
             S = statusMgr.Stack();
             S.suppressIdentifier("*timeout*");
 
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
+
             S.addStatus("Warning", Identifier="myapp:net:timeout", Message="hidden");
             S.addStatus("Warning", Identifier="other:timeout:detail", Message="hidden");
             S.addStatus("Warning", Identifier="unrelated", Message="visible");
 
-            testCase.verifyFalse(S.Statuses(2).IsVisible)
-            testCase.verifyFalse(S.Statuses(3).IsVisible)
-            testCase.verifyTrue(S.Statuses(4).IsVisible)
+            testCase.verifyEqual(view.RecordedStatuses.Message, "visible")
         end
 
         function tSuppressGlobLiteralStringStillWorks(testCase)
@@ -374,11 +399,13 @@ classdef tStack < matlab.unittest.TestCase
             S = statusMgr.Stack();
             S.suppressIdentifier("a:b");
 
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
+
             S.addStatus("Warning", Identifier="a:b", Message="hidden");
             S.addStatus("Warning", Identifier="a:b:c", Message="visible");
 
-            testCase.verifyFalse(S.Statuses(2).IsVisible)
-            testCase.verifyTrue(S.Statuses(3).IsVisible)
+            testCase.verifyEqual(view.RecordedStatuses.Message, "visible")
         end
 
         function tSuppressDoesNotAffectNoIdentifier(testCase)
@@ -386,9 +413,12 @@ classdef tStack < matlab.unittest.TestCase
             S = statusMgr.Stack();
             S.suppressIdentifier("my:id");
 
+            view = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(view))
+
             S.addStatus("Warning", Message="no id");
 
-            testCase.verifyTrue(S.CurrentStatus.IsVisible)
+            testCase.verifyEqual(view.RecordedStatuses.Message, "no id")
         end
 
         function tMonitorable(testCase)

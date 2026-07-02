@@ -143,12 +143,19 @@ stack.monitorFuture(future, Message="Long job");
 
 The enum also defines `RequestingInput`, `AwaitingInput`, and `ValueSupplied`. These are **transitional, internal states** used to drive the user-input handshake (see *User input* below) and are marked `Hidden` on `statusMgr.StatusType` — do not push them directly.
 
+Every status also carries an ordered **`Level`** (`Trace < Debug < Info < Notice < Warning < Error < Critical`, see `statusMgr.Level`) defaulted from its type: `Error→Error`, `Warning→Warning`, `Running`/`Success→Notice`, `Info→Info`, `Idle→Trace`. Running is deliberately `Notice` — it marks a key state in which the app may be unresponsive. Override per status with `stack.addStatus("Info", Level="Critical")`.
+
 ### Key features
 
 - **Stack semantics** — statuses stack; removing the top status reveals the one beneath, so nested operations compose naturally.
 - **Multiple views** — attach as many views as needed to the same stack; each updates independently.
 - **Array stacks** — broadcast a status to several stacks at once: `[stack1, stack2].addStatus("Running")`.
-- **Suppression** — hide specific identifiers without removing them. Exact match or glob patterns:
+- **Per-view verbosity** — every view has a `MinLevel` threshold (default `Trace` = show everything): only statuses with `Level >= MinLevel` are displayed, so one stack can drive views at different verbosities. Input requests are exempt (control flow, not verbosity) — a terse view still collects input.
+  ```matlab
+  statusMgr.view.CommandWindow(stack, MinLevel="Warning");  % terse terminal
+  statusMgr.view.FileLog(stack, LogFolder=pwd);             % records everything
+  ```
+- **Suppression** — the stack carries a default list of identifiers to hide (exact match or glob). The list is copied into a view's `ExcludeIdentifiers` when the view binds to the stack, so it affects views attached *afterwards*; the statuses themselves are always recorded. To hide an identifier on an existing view, edit that view's `ExcludeIdentifiers`.
   ```matlab
   stack.suppressIdentifier("my:warning:id")    % exact
   stack.suppressIdentifier("myapp:network:*")  % any identifier with that prefix
@@ -161,6 +168,16 @@ The enum also defines `RequestingInput`, `AwaitingInput`, and `ValueSupplied`. T
 - **Background work** — `stack.runInBackground(@fcn, Args={a, b})` launches a `parfeval` future, pushes a `RunningCancellable` status, streams progress through a `DataQueue`, and converts failures into Error statuses. Cancel-aware views cancel the future. Or use `stack.monitorFuture(future)` for a future you already have. `runInBackground` and synchronous `stack.run(@fcn, Args={a, b})` both take worker/function arguments as a cell via `Args={...}`.
 - **Per-view filters** — every view supports `IncludeIdentifiers` / `ExcludeIdentifiers` glob lists that complement the stack-level `suppressIdentifier`. Have a CommandWindow show only `myapp:debug:*` while a FileLog records everything.
 - **Structured / rotating logs** — `FileLog` accepts `Format="json-lines"` for one-JSON-object-per-line output, and `MaxBytes` triggers rotation (`Log.txt` → `Log_1.txt`) when the file would otherwise grow without bound.
+
+### Migrating from `IsVisible` (removed in this version)
+
+`Status.IsVisible` and the `addStatus(..., IsVisible=false)` option were removed in favour of the `Level` model:
+
+- Replace `addStatus(..., IsVisible=false)` with `addStatus(..., Level="Trace")`. Because the default `MinLevel` is `Trace` (views show everything), also raise `MinLevel` (e.g. to `"Info"`) on any view that should not display trace-level statuses.
+- `suppressIdentifier` no longer hides matching statuses on views that are already attached — it seeds the `ExcludeIdentifiers` of views bound afterwards. Call `suppressIdentifier` before creating views, or set the view's `ExcludeIdentifiers` directly.
+- The `IsVisible` column in `Status.table()` / `RecordingView.RecordedStatuses` is now `Level`.
+
+(Note this is distinct from `addStatus(..., Silent=true)`, which suppresses the update *event* entirely — no view is notified at all.)
 
 ## Examples
 

@@ -289,6 +289,21 @@ classdef tStatusBar < matlab.uitest.TestCase
             testCase.verifyFalse(isvalid(layout))
         end
 
+        function tClearsWhenNothingDisplayable(testCase)
+            % With MinLevel raised, dismissing the only displayable
+            % status leaves nothing the bar can show (Idle is Trace),
+            % so clearDisplay blanks the bar instead of leaving the
+            % last alert on screen.
+            testCase.Bar.MinLevel = "Warning";
+            status = testCase.Stack.addStatus("Error", ...
+                Message="boom", MessageShort="boom");
+            testCase.assertEqual(string(testCase.Bar.MessageLabel.Text), "boom")
+
+            testCase.Stack.removeStatus(status);
+
+            testCase.verifyEqual(string(testCase.Bar.MessageLabel.Text), "")
+        end
+
     end
 
     methods (Static, Access = private)

@@ -89,18 +89,24 @@ classdef tCommandWindow < matlab.uitest.TestCase
             testCase.verifyEqual(newview.PreviousMessage, "idle 2");
         end
 
-        function tNonVisibleStatus(testCase)
-            % A status with IsVisible=false is not printed to the terminal.
-            testCase.Stack.addStatus("Warning", Message="hidden", IsVisible=false);
+        function tBelowMinLevelStatus(testCase)
+            % A status below the view's MinLevel is not printed.
+            testCase.CommandWindowView.MinLevel = "Info";
+            testCase.Stack.addStatus("Warning", Message="hidden", Level="Trace");
             testCase.verifyTrue(ismissing(testCase.CommandWindowView.PreviousMessage))
         end
 
         function tSuppressedIdentifier(testCase)
-            % Statuses whose identifier is suppressed on the stack are not
-            % printed to the terminal.
-            testCase.Stack.suppressIdentifier("my:id");
-            testCase.Stack.addStatus("Warning", Identifier="my:id", Message="suppressed");
-            testCase.verifyTrue(ismissing(testCase.CommandWindowView.PreviousMessage))
+            % Stack suppression seeds the excludes of views bound after
+            % the call: a fresh view does not print the identifier.
+            S = statusMgr.Stack();
+            S.suppressIdentifier("my:id");
+            view = statusMgr.view.CommandWindow(S);
+            testCase.addTeardown(@() delete(view))
+
+            S.addStatus("Warning", Identifier="my:id", Message="suppressed");
+
+            testCase.verifyTrue(ismissing(view.PreviousMessage))
         end
 
         function tUpdateMessageAndValue(testCase)

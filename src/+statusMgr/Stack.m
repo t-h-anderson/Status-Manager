@@ -80,7 +80,8 @@ classdef Stack < statusMgr.internal.StackInterface
             % cleanupObj is an optional output that creates a cleanup object
             % Name value pairs:
             %   Message (Running) - set the Status message
-            %   IsVisible (true) - set the Status visibility
+            %   Level - importance used for per-view verbosity gating
+            %   (defaults from the status type, see statusMgr.Level)
             %   Value (double) - Used for setting progress bar values
             %   Data (Status data) - Store data in the Status
             %   Silent (logical) - whether to notify the Status has
@@ -92,7 +93,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.Message (1,1) string = ""
                 nvp.Title (1,1) string = ""
                 nvp.MessageShort(1,1) string = string(nan)
-                nvp.IsVisible (1,1) logical = true
+                nvp.Level (1,:) statusMgr.Level {mustBeScalarOrEmpty} = statusMgr.Level.empty(1,0)
                 nvp.IsTemporary (1,:) logical {mustBeScalarOrEmpty} = false
                 nvp.Value (1,1) double = NaN
                 nvp.Data = []
@@ -109,7 +110,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 "Title", nvp.Title, ...
                 "Identifier", nvp.Identifier, ...
                 "MessageShort", nvp.MessageShort, ...
-                "IsVisible", nvp.IsVisible, ...
+                "Level", nvp.Level, ...
                 "Value", nvp.Value, ...
                 "IsTemporary", nvp.IsTemporary, ...
                 "Data", nvp.Data, ...
@@ -160,7 +161,7 @@ classdef Stack < statusMgr.internal.StackInterface
             arguments
                 objs (1,:)
                 err (1,1) MException
-                nvp.IsVisible (1,1) logical = true
+                nvp.Level (1,:) statusMgr.Level {mustBeScalarOrEmpty} = statusMgr.Level.empty(1,0)
                 nvp.IsTemporary (1,1) logical = false
                 nvp.Silent (1,1) logical = false
                 nvp.CreateCleanupObj (1,1) logical = true
@@ -625,17 +626,20 @@ classdef Stack < statusMgr.internal.StackInterface
     methods % Suppression
 
         function suppressIdentifier(obj, id)
-            % Hide statuses whose Identifier matches `id`.
+            % Add `id` to the stack's default suppression list.
             %
             %   stack.suppressIdentifier("myapp:network:timeout")
             %   stack.suppressIdentifier("myapp:network:*")  % glob
             %   stack.suppressIdentifier("*:timeout")
             %
-            % `id` is matched against each new status's Identifier as
-            % a glob: `*` matches any run of characters (including
-            % none); other characters match literally. A status with
-            % a matching identifier is added to the stack with
-            % IsVisible=false so views skip displaying it.
+            % Entries are globs: `*` matches any run of characters
+            % (including none); other characters match literally.
+            % SuppressedIdentifiers is seeded into a view's
+            % ExcludeIdentifiers when the view binds to this stack
+            % (setStack), so it affects views attached afterwards. To
+            % hide an identifier on an already-attached view, edit that
+            % view's ExcludeIdentifiers directly. The statuses
+            % themselves are never modified.
             arguments
                 obj (1,1) statusMgr.Stack
                 id (1,1) string
@@ -654,25 +658,6 @@ classdef Stack < statusMgr.internal.StackInterface
                 id (1,1) string
             end
             obj.SuppressedIdentifiers(obj.SuppressedIdentifiers == id) = [];
-        end
-
-        function tf = isIdentifierSuppressed(obj, identifier)
-            % True if `identifier` matches any entry in
-            % SuppressedIdentifiers (treating each entry as a glob).
-            arguments
-                obj (1,1) statusMgr.Stack
-                identifier (1,1) string
-            end
-            tf = false;
-            if identifier == "" || isempty(obj.SuppressedIdentifiers)
-                return
-            end
-            for sup = obj.SuppressedIdentifiers
-                if statusMgr.util.globMatches(identifier, sup)
-                    tf = true;
-                    return
-                end
-            end
         end
 
     end
@@ -705,12 +690,10 @@ classdef Stack < statusMgr.internal.StackInterface
                 obj.removeLastStatus(Silent=true);
             end
 
-            % Hide status if its identifier is suppressed.
-            if newStatus.Identifier ~= "" && obj.isIdentifierSuppressed(newStatus.Identifier)
-                newStatus.IsVisible = false;
-            end
-
             % Add the status (and its per-instance Completed listener).
+            % No display gating happens here: the stack records every
+            % status verbatim, and each view decides what it shows (see
+            % StatusViewBase.shouldDisplay).
             obj.attachStatus(newStatus);
         end
 

@@ -24,14 +24,17 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
                 nvp.ShowSuccess (1,1) logical = true
                 nvp.ShowIdle (1,1) logical = false
                 nvp.HandleInputRequests (1,1) logical = true
+                nvp.MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
                 nvp.ShowRepeatedAsDots (1,1) logical = true
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
 
-            % Set view parent and stack properties
-            obj.setStack(stack);
+            % nvp before setStack: setStack seeds the stack's suppressed
+            % identifiers into ExcludeIdentifiers, which set() would
+            % otherwise overwrite.
             set(obj, nvp);
+            obj.setStack(stack);
         end
 
         function tf = isVisible(~)

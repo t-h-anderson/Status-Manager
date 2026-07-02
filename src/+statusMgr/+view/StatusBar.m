@@ -85,6 +85,7 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
                 % does not transition the status, so a claim-capable
                 % view (Popup, CommandWindow) can still claim.
                 nvp.HandleInputRequests (1,1) logical = true
+                nvp.MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
@@ -236,16 +237,18 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
 
         function alerts = alertStatuses(obj)
             % Statuses on the stack that the bar treats as alerts:
-            % Error, Warning, Success. Used to decide whether
-            % "Close All" should be shown and to populate the
-            % multi-alert popout.
+            % Error, Warning, Success — restricted to those this view
+            % would actually display, so the count/popout match what
+            % the user can see. Used to decide whether "Close All"
+            % should be shown and to populate the multi-alert popout.
             if isempty(obj.Stack) || ~isvalid(obj.Stack)
                 alerts = statusMgr.Status.empty(1,0);
                 return
             end
             statuses = obj.Stack.Statuses;
-            types = [statuses.Type];
-            alerts = statuses(ismember(types, obj.AlertStatusTypes));
+            idx = ismember([statuses.Type], obj.AlertStatusTypes) ...
+                & arrayfun(@(s) obj.shouldDisplay(s), statuses);
+            alerts = statuses(idx);
         end
 
         function html = buildAlertsHtml(obj, alerts)
@@ -387,6 +390,13 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
         end
 
         function displayIdle(obj, ~)
+            obj.present("", obj.InfoColor, false, NaN, false, false, false, "");
+        end
+
+        function clearDisplay(obj)
+            % Nothing on the stack is displayable for this view: blank
+            % the bar (same visual as Idle) instead of leaving the last
+            % rendered status on screen.
             obj.present("", obj.InfoColor, false, NaN, false, false, false, "");
         end
 

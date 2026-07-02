@@ -54,6 +54,7 @@ classdef InputField < statusMgr.internal.view.StatusSinkViewBase
                 nvp.ShowSuccess (1,1) logical = true
                 nvp.ShowIdle (1,1) logical = true   % default true: clears the field
                 nvp.HandleInputRequests (1,1) logical = true
+                nvp.MinLevel (1,1) statusMgr.Level = statusMgr.Level.Trace
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
@@ -123,6 +124,11 @@ classdef InputField < statusMgr.internal.view.StatusSinkViewBase
 
         function displayIdle(obj, ~)
             % Idle clears the line back to an empty, read-only field.
+            obj.clearDisplay();
+        end
+
+        function clearDisplay(obj)
+            % Nothing displayable (or Idle): blank, read-only field.
             obj.PromptLabel.Visible = "off";
             obj.OkButton.Visible = "off";
             obj.Field.Editable = "off";
