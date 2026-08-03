@@ -90,6 +90,14 @@ classdef Status < matlab.mixin.SetGet
             [objs.Value] = deal(value);
         end
 
+        function updateData(objs, data)
+            arguments
+                objs (1,:) statusMgr.Status
+                data
+            end
+            [objs.Data] = deal(data);
+        end
+
         function transitionInputState(obj, newType, value)
             % Transition status type for the input request protocol.
             % RequestingInput -> AwaitingInput -> ValueSupplied

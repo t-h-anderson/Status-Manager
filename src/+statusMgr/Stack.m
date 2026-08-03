@@ -13,6 +13,9 @@ classdef Stack < statusMgr.internal.StackInterface
         % is already gone). get.Statuses lazily refills the Idle default
         % per instance instead.
         Statuses = statusMgr.Status.empty(1,0)
+    end
+
+    properties (SetAccess = protected, Transient)
         StatusListeners
         StackMonitorableListeners
     end
@@ -26,6 +29,14 @@ classdef Stack < statusMgr.internal.StackInterface
 
     properties (Hidden)
         ID
+    end
+
+    properties (Access = private, Transient)
+        FutureMonitorResources (1,:) struct = struct( ...
+            "StatusID", {}, ...
+            "PollTimer", {}, ...
+            "ProgressSubscription", {}, ...
+            "CompletionListener", {})
     end
 
     properties (Dependent)
@@ -43,8 +54,16 @@ classdef Stack < statusMgr.internal.StackInterface
         end
 
         function delete(obj)
-            delete(obj.StatusListeners);
-            delete(obj.StackMonitorableListeners);
+            obj.cleanupFutureMonitorResources();
+            if ~isempty(obj.StatusListeners)
+                delete(obj.StatusListeners);
+            end
+            obj.StatusListeners = event.listener.empty(1,0);
+            if ~isempty(obj.StackMonitorableListeners)
+                delete(obj.StackMonitorableListeners);
+            end
+            obj.StackMonitorableListeners = event.listener.empty(1,0);
+            obj.Statuses = statusMgr.Status.empty(1,0);
         end
     end
 
@@ -380,31 +399,12 @@ classdef Stack < statusMgr.internal.StackInterface
                 "Message", msg, ...
                 "Data", future);
 
-            % Wrap obj and status in WeakReferences so the timer /
-            % afterEach closures do not pin the Stack (and via it,
-            % every Status on the stack) alive for the duration of
-            % the future. Without this, clearing the stack handle
-            % from user code couldn't actually GC the stack until
-            % the future ran to completion — same pattern Popup and
-            % CommandWindow already use for their timers.
-            weakStack = matlab.lang.WeakReference(obj);
-            weakStatus = matlab.lang.WeakReference(status);
-
+            progressSubscription = [];
             if ~isempty(nvp.ProgressQueue)
-                afterEach(nvp.ProgressQueue, ...
-                    @(v) statusMgr.Stack.onProgressFromWorker(weakStack, weakStatus, v));
+                progressSubscription = obj.makeProgressSubscription(status, nvp.ProgressQueue);
             end
 
-            pollTimer = timer( ...
-                "ExecutionMode", "fixedSpacing", ...
-                "Period", nvp.PollPeriod, ...
-                "TimerFcn", @(t,~) statusMgr.Stack.pollFutureState(t, weakStack, weakStatus, future));
-            start(pollTimer);
-
-            % If the user (or a view) completes the status, propagate
-            % cancellation to the future and stop the poll timer.
-            addlistener(status, "Completed", ...
-                @(~,~) statusMgr.Stack.onStatusCompletedCancelFuture(future, pollTimer));
+            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription);
         end
 
         function [future, status] = runInBackground(obj, fcnHandle, nvp)
@@ -444,13 +444,24 @@ classdef Stack < statusMgr.internal.StackInterface
                 msg = "Running: " + statusMgr.Stack.functionLabel(fcnHandle);
             end
 
-            future = parfeval(nvp.Pool, fcnHandle, nvp.NumOutputs, nvp.Args{:});
+            statusType = "Running";
+            if nvp.Cancellable
+                statusType = "RunningCancellable";
+            end
 
-            status = obj.monitorFuture(future, ...
-                Message=msg, ...
-                Cancellable=nvp.Cancellable, ...
-                ProgressQueue=nvp.ProgressQueue, ...
-                PollPeriod=nvp.PollPeriod);
+            status = obj.addStatus(statusType, ...
+                "Message", msg, ...
+                "Data", []);
+
+            future = parfeval(nvp.Pool, fcnHandle, nvp.NumOutputs, nvp.Args{:});
+            status.updateData(future);
+
+            progressSubscription = [];
+            if ~isempty(nvp.ProgressQueue)
+                progressSubscription = obj.makeProgressSubscription(status, nvp.ProgressQueue);
+            end
+
+            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription);
         end
 
         function varargout = run(obj, fcnHandle, nvp)
@@ -722,6 +733,44 @@ classdef Stack < statusMgr.internal.StackInterface
             obj.StatusListeners(end+1) = obj.makeCompletedListener(newStatus);
         end
 
+        function progressSubscription = makeProgressSubscription(obj, status, progressQueue)
+            arguments
+                obj (1,1) statusMgr.Stack
+                status (1,1) statusMgr.Status
+                progressQueue (1,1) parallel.pool.DataQueue
+            end
+
+            statusID = status.ID;
+            statusMgr.internal.futureProgressRegistry("register", statusID, obj, status);
+            progressSubscription = afterEach(progressQueue, ...
+                @(v) statusMgr.internal.onFutureProgress(statusID, v));
+        end
+
+        function attachFutureMonitoring(obj, status, future, pollPeriod, progressSubscription)
+            arguments
+                obj (1,1) statusMgr.Stack
+                status (1,1) statusMgr.Status
+                future (1,1) parallel.Future
+                pollPeriod (1,1) double {mustBePositive}
+                progressSubscription = []
+            end
+
+            weakStack = matlab.lang.WeakReference(obj);
+            weakStatus = matlab.lang.WeakReference(status);
+
+            pollTimer = timer( ...
+                "ExecutionMode", "fixedSpacing", ...
+                "Period", pollPeriod, ...
+                "TimerFcn", @(t,~) statusMgr.Stack.pollFutureState(t, weakStack, weakStatus, future));
+            start(pollTimer);
+
+            completionListener = addlistener(status, "Completed", ...
+                @(src,~) statusMgr.Stack.onStatusCompletedCancelFuture( ...
+                    weakStack, src, future, pollTimer));
+
+            obj.registerFutureMonitorResource(status.ID, pollTimer, progressSubscription, completionListener);
+        end
+
         function lis = makeCompletedListener(obj, status)
             % Build the Completed listener for a Status. The callback holds
             % the Stack via a WeakReference so the listener (which the Stack
@@ -746,9 +795,67 @@ classdef Stack < statusMgr.internal.StackInterface
             obj.add(status);
         end
 
+        function registerFutureMonitorResource(obj, statusID, pollTimer, progressSubscription, completionListener)
+            resource = struct( ...
+                "StatusID", string(statusID), ...
+                "PollTimer", pollTimer, ...
+                "ProgressSubscription", progressSubscription, ...
+                "CompletionListener", completionListener);
+            obj.FutureMonitorResources(end+1) = resource;
+        end
+
+        function unregisterFutureMonitorResource(obj, statusID)
+            if isempty(obj.FutureMonitorResources)
+                return
+            end
+
+            ids = string({obj.FutureMonitorResources.StatusID});
+            idx = ids == string(statusID);
+            if ~any(idx)
+                return
+            end
+
+            resources = obj.FutureMonitorResources(idx);
+            obj.FutureMonitorResources(idx) = [];
+            for i = 1:numel(resources)
+                obj.cleanupFutureMonitorResource(resources(i));
+            end
+        end
+
+        function cleanupFutureMonitorResources(obj)
+            resources = obj.FutureMonitorResources;
+            obj.FutureMonitorResources = struct( ...
+                "StatusID", {}, ...
+                "PollTimer", {}, ...
+                "ProgressSubscription", {}, ...
+                "CompletionListener", {});
+            for i = 1:numel(resources)
+                obj.cleanupFutureMonitorResource(resources(i));
+            end
+        end
+
+        function cleanupFutureMonitorResource(~, resource)
+            statusMgr.internal.futureProgressRegistry("unregister", resource.StatusID);
+            if isfield(resource, "PollTimer") && ~isempty(resource.PollTimer)
+                statusMgr.util.stopTimer(resource.PollTimer);
+            end
+            if isfield(resource, "ProgressSubscription") && ~isempty(resource.ProgressSubscription)
+                try
+                    delete(resource.ProgressSubscription);
+                catch
+                end
+            end
+            if isfield(resource, "CompletionListener") && ~isempty(resource.CompletionListener)
+                try
+                    delete(resource.CompletionListener);
+                catch
+                end
+            end
+        end
+
     end
 
-    methods (Static, Access = private)
+    methods (Static, Hidden)
 
         function onStatusCompletedFromWeak(weakStack, s, e)
             % Deref the WeakReference set up in makeCompletedListener and
@@ -820,27 +927,24 @@ classdef Stack < statusMgr.internal.StackInterface
             stack = weakStack.Handle;
             status = weakStatus.Handle;
             if isempty(stack) || isempty(status) ...
-                    || ~isvalid(stack) || ~isvalid(status) || status.IsComplete
+                    || ~isvalid(stack) || ~isvalid(status)
                 return
             end
             if isnumeric(value) && isscalar(value)
-                stack.updateStatus(status, "Value", double(value));
+                status.updateValue(double(value));
+                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
             elseif isstring(value) || (ischar(value) && (isrow(value) || isempty(value)))
-                stack.updateStatus(status, "Message", string(value));
+                status.updateMessage(string(value));
+                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
             elseif isstruct(value)
-                args = cell(1, 4);
-                nArgs = 0;
                 if isfield(value, "Value")
-                    args(nArgs + (1:2)) = {"Value", double(value.Value)};
-                    nArgs = nArgs + 2;
+                    status.updateValue(double(value.Value));
                 end
                 if isfield(value, "Message")
-                    args(nArgs + (1:2)) = {"Message", string(value.Message)};
-                    nArgs = nArgs + 2;
+                    status.updateMessage(string(value.Message));
                 end
-                if nArgs > 0
-                    args = args(1:nArgs);
-                    stack.updateStatus(status, args{:});
+                if isfield(value, "Value") || isfield(value, "Message")
+                    statusMgr.Stack.notifyIfCurrentStatus(stack, status);
                 else
                     warning("statusMgr:Stack:unhandledProgressValue", ...
                         "Progress struct has neither a Value nor a Message " + ...
@@ -855,11 +959,29 @@ classdef Stack < statusMgr.internal.StackInterface
             end
         end
 
-        function onStatusCompletedCancelFuture(future, pollTimer)
+        function notifyIfCurrentStatus(stack, status)
+            if isempty(stack) || ~isvalid(stack)
+                return
+            end
+            statuses = stack.Statuses;
+            idx = string([statuses.ID]) == status.ID;
+            if ~any(idx)
+                return
+            end
+            if stack.CurrentStatus.ID == status.ID
+                notify(stack, "StatusUpdated");
+            end
+        end
+
+        function onStatusCompletedCancelFuture(weakStack, status, future, pollTimer)
             % If the status is completed externally (e.g. user clicks
             % Cancel on the StatusBar), stop the poll timer and
             % cancel any not-yet-finished future.
             statusMgr.util.stopTimer(pollTimer);
+            stack = weakStack.Handle;
+            if ~isempty(stack) && isvalid(stack)
+                stack.unregisterFutureMonitorResource(status.ID);
+            end
             if isvalid(future) && ismember(string(future.State), ["queued", "running"])
                 cancel(future);
             end
