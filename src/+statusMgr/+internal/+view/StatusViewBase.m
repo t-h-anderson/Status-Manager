@@ -75,7 +75,7 @@ classdef (Abstract) StatusViewBase < ...
                 return
             end
 
-            if ~obj.isVisible()
+            if isempty(obj.Stack) || ~isvalid(obj.Stack) || ~obj.isVisible()
                 return
             end
 
@@ -91,6 +91,13 @@ classdef (Abstract) StatusViewBase < ...
                 % tracking; views showing the top have nothing new to show.
                 if ~obj.RefreshOnRemoval && obj.shouldDisplayStatus(eventData.Status)
                     obj.displayBackgroundUpdate(eventData.Status);
+                elseif obj.RefreshOnRemoval && ~isempty(obj.IncomingStatus) ...
+                        && isvalid(obj.IncomingStatus) ...
+                        && obj.IncomingStatus.ID == eventData.Status.ID ...
+                        && obj.shouldDisplayStatus(eventData.Status)
+                    % A filtered status can be on top while this view still
+                    % displays the status being updated. Keep its resources.
+                    obj.updateDisplayedStatus(eventData.Status);
                 end
                 return
             end
@@ -119,15 +126,36 @@ classdef (Abstract) StatusViewBase < ...
         end
 
         function setStack(obj, stack)
+            % An empty stack disconnects the view without deleting it.
+            if isequal(obj.Stack, stack) && ~isempty(obj.StackListener) ...
+                    && all(isvalid(obj.StackListener))
+                return
+            end
             delete(obj.StackListener);
-            updateStatusFn = @(src, event) obj.standardDisplay(event);
+            obj.StackListener = event.listener.empty(1,0);
+            obj.clearDisplay();
+            obj.IncomingStatus = statusMgr.Status.empty(1,0);
+            obj.PreviousStatus = statusMgr.Status.empty(1,0);
             obj.Stack = stack;
-            obj.StackListener = listener(stack, "StatusUpdated", updateStatusFn);
+            if ~isempty(stack)
+                updateStatusFn = @(src, event) obj.standardDisplay(event);
+                obj.StackListener = listener(stack, "StatusUpdated", updateStatusFn);
+                % Restore UI state on reattachment without replaying log entries.
+                obj.standardDisplay(statusMgr.monitorable.StatusEventData(stack.CurrentStatus, "Refresh"));
+            end
         end
 
     end
 
     methods (Access = protected)
+
+        function clearDisplay(obj) %#ok<MANU>
+            % Release active resources when detached or rebound.
+        end
+
+        function updateDisplayedStatus(obj, status)
+            obj.dispatchDisplay(status);
+        end
 
         function displayBackgroundUpdate(obj, status)
             % Display an update to a status beneath the top of the stack.

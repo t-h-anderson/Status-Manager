@@ -93,7 +93,6 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
             set(obj, nvp);
             obj.buildUI();
             obj.setStack(stack);
-            obj.standardDisplay();
         end
 
         function tf = isVisible(obj)
@@ -123,6 +122,13 @@ classdef StatusBar < statusMgr.internal.view.StatusViewBase
     end
 
     methods (Access = protected)
+
+        function clearDisplay(obj)
+            if ~isempty(obj.Popout) && isvalid(obj.Popout)
+                obj.Popout.close();
+            end
+            obj.displayIdle([]);
+        end
 
         function buildUI(obj)
             % uigridlayout auto-resizes with its parent — that's why

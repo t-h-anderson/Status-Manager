@@ -19,12 +19,14 @@ classdef (Abstract) StatusViewInterface < handle & matlab.mixin.Heterogeneous
 
         % Bind the view to a Stack and start listening for updates.
         % Implementations are expected to wire a StatusUpdated listener
-        % so that subsequent stack changes refresh the view.
+        % so that subsequent stack changes refresh the view. An empty
+        % stack disconnects listeners and releases active display resources
+        % without deleting the view; it can be rebound later.
         setStack(obj, stack)
     end
 
     methods (Static, Sealed, Access = protected)
-        function obj = getDefaultScalarElement()
+        function obj = getDefaultScalarElement() %#ok<STOUT>
             % Required by matlab.mixin.Heterogeneous. We never need
             % auto-generated default elements, so error if called.
             error("statusMgr:view:noDefault", ...

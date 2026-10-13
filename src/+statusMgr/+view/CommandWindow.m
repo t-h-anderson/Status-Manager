@@ -47,6 +47,10 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
     end
 
     methods (Access = protected)
+        function clearDisplay(obj)
+            obj.clearRunning();
+        end
+
         function cleanupCompletedStatus(obj)
             if ~isempty(obj.IncomingStatus) && ...
                     (~isvalid(obj.IncomingStatus) || obj.IncomingStatus.IsComplete)

@@ -62,7 +62,6 @@ classdef InputField < statusMgr.internal.view.StatusSinkViewBase
             set(obj, nvp);
             obj.buildUI();
             obj.setStack(stack);
-            obj.standardDisplay();
         end
 
         function tf = isVisible(obj)
@@ -80,6 +79,17 @@ classdef InputField < statusMgr.internal.view.StatusSinkViewBase
     end
 
     methods (Access = protected)
+
+        function clearDisplay(obj)
+            status = obj.PendingStatus;
+            obj.PendingStatus = statusMgr.Status.empty(1,0);
+            if obj.isVisible()
+                obj.displayIdle([]);
+            end
+            if ~isempty(status) && isvalid(status) && ~status.IsComplete
+                status.transitionInputState(statusMgr.StatusType.ValueSupplied, string(status.Data));
+            end
+        end
 
         function buildUI(obj)
             % A two-row grid: prompt label across the top (only visible

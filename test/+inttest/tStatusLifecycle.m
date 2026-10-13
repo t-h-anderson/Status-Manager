@@ -1,4 +1,11 @@
 classdef tStatusLifecycle < matlab.uitest.TestCase
+    properties (TestParameter)
+        clearGroup = struct(Named=@() statusMgr.util.StatusManager.clear("retained"), ...
+            All=@() statusMgr.util.StatusManager.clear())
+        addFiltered = struct(Info=@(s) s.addStatus("Info"), ...
+            Identifier=@(s) s.addStatus("Warning", Identifier="filtered"), ...
+            Invisible=@(s) s.addStatus("Error", IsVisible=false))
+    end
     methods (TestMethodSetup)
         function isolateRegistry(testCase)
             token = statusMgr.util.StatusManager.snapshot();
@@ -526,6 +533,191 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             testCase.verifyError(@() stack.run(@(x) x, 1), ?MException);
             testCase.verifyError(@() stack.runCancellable(@(~, x) x, 1), ?MException);
             testCase.verifyEqual(stack.run(@(varargin) numel(varargin), Args={"Message", "hello"}), 2);
+        end
+
+        function tShutdownPreservesAndDisconnectsBorrowedView(testCase)
+            stack = statusMgr.util.StatusManager.make("borrowedShutdown");
+            other = statusMgr.Stack();
+            testCase.addTeardown(@() delete(other));
+            view = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(view));
+            cleanup = statusMgr.util.StatusManager.addViewScoped("borrowedShutdown", view); %#ok<NASGU>
+
+            statusMgr.util.StatusManager.shutdown();
+            clear cleanup
+
+            testCase.verifyTrue(isvalid(view));
+            testCase.verifyEmpty(view.Stack);
+            testCase.verifyEmpty(view.StackListener);
+            view.setStack(other);
+            other.addStatus("Info", Message="reused");
+            testCase.verifyEqual(view.RecordedStatuses.Message, "reused");
+        end
+
+        function tShutdownStopsBorrowedPopupWithoutDeletingIt(testCase)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.util.StatusManager.make("borrowedPopup");
+            popup = statusMgr.view.Popup(figure, stack);
+            testCase.addTeardown(@() delete(popup));
+            statusMgr.util.StatusManager.addView("borrowedPopup", popup);
+            stack.addStatus("Running", Value=0.1);
+            dialog = popup.ProgressDlg;
+            timer = popup.CancelTimer;
+
+            statusMgr.util.StatusManager.shutdown();
+
+            testCase.verifyTrue(isvalid(popup));
+            testCase.verifyTrue(isvalid(figure));
+            testCase.verifyEmpty(popup.Stack);
+            testCase.verifyFalse(isvalid(dialog));
+            testCase.verifyFalse(isvalid(timer));
+        end
+
+        function tRetainedClearedGroupStopsLoggingImmediately(testCase, clearGroup)
+            stack = statusMgr.util.StatusManager.make("retained", EnableCommandWindow=true);
+            testCase.addTeardown(@() delete(stack));
+            group = statusMgr.util.StatusManager.get("retained", Type="StatusManagerGroup");
+            testCase.addTeardown(@() delete(group));
+            view = group.Views;
+            evalc('stack.addStatus("Running", Message="working");');
+            timer = view.RunningTimer;
+
+            clearGroup();
+
+            testCase.verifyFalse(isvalid(timer));
+            testCase.verifyEmpty(evalc('stack.addStatus("Info", Message="after clear");'));
+            statusMgr.util.StatusManager.shutdown();
+            testCase.verifyEmpty(evalc('stack.addStatus("Info", Message="after shutdown");'));
+        end
+
+        function tSnapshotRestoreReconnectsWithoutReplayingLog(testCase)
+            stack = statusMgr.util.StatusManager.make("restoreLog");
+            view = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(view));
+            statusMgr.util.StatusManager.addView("restoreLog", view);
+            stack.addStatus("Info", Message="before");
+            token = statusMgr.util.StatusManager.snapshot();
+            statusMgr.util.StatusManager.clear();
+            stack.addStatus("Info", Message="while detached");
+
+            statusMgr.util.StatusManager.restore(token);
+
+            testCase.verifyEqual(view.Stack, stack);
+            testCase.verifyEqual(view.RecordedStatuses.Message, "before");
+            stack.addStatus("Info", Message="after");
+            testCase.verifyEqual(view.RecordedStatuses.Message, ["before"; "after"]);
+        end
+
+        function tSnapshotRestoreRecreatesVisibleProgress(testCase)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.util.StatusManager.make("restorePopup", PopupParent=figure);
+            popup = statusMgr.util.StatusManager.get("restorePopup", Type="Views");
+            running = stack.addStatus("Running", Value=0.1);
+            dialog = popup.ProgressDlg;
+            token = statusMgr.util.StatusManager.snapshot();
+            statusMgr.util.StatusManager.clear();
+            testCase.verifyFalse(isvalid(dialog));
+            stack.updateStatus(running, Value=0.8);
+
+            statusMgr.util.StatusManager.restore(token);
+
+            testCase.verifyTrue(isvalid(popup.ProgressDlg));
+            testCase.verifyEqual(popup.ProgressDlg.Value, 0.8);
+            testCase.verifyEqual(popup.Stack, stack);
+        end
+
+        function tRestoreDoesNotDisturbUnchangedGroupDisplay(testCase)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.util.StatusManager.make("unchanged", PopupParent=figure);
+            popup = statusMgr.util.StatusManager.get("unchanged", Type="Views");
+            stack.addStatus("Running", Value=0.4);
+            dialog = popup.ProgressDlg;
+            token = statusMgr.util.StatusManager.snapshot();
+            statusMgr.util.StatusManager.make("temporary");
+
+            statusMgr.util.StatusManager.restore(token);
+
+            testCase.verifyTrue(isvalid(dialog));
+            testCase.verifyEqual(popup.ProgressDlg, dialog);
+            testCase.verifyEqual(dialog.Value, 0.4);
+        end
+
+        function tRestoreDisconnectsDiscardedRetainedGroup(testCase)
+            token = statusMgr.util.StatusManager.snapshot();
+            stack = statusMgr.util.StatusManager.make("discarded");
+            testCase.addTeardown(@() delete(stack));
+            group = statusMgr.util.StatusManager.get("discarded", Type="StatusManagerGroup");
+            testCase.addTeardown(@() delete(group));
+            view = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(view));
+            group.addView(view);
+
+            statusMgr.util.StatusManager.restore(token);
+
+            stack.addStatus("Info", Message="discarded");
+            testCase.verifyEmpty(view.RecordedStatuses);
+            testCase.verifyEmpty(view.Stack);
+        end
+
+        function tRemovingBorrowedViewDisconnectsListener(testCase)
+            group = statusMgr.util.StatusManagerGroup();
+            testCase.addTeardown(@() delete(group));
+            stack = group.Stack;
+            testCase.addTeardown(@() delete(stack));
+            view = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(view));
+            group.addView(view);
+
+            group.removeView(1);
+            stack.addStatus("Info", Message="removed");
+
+            testCase.verifyTrue(isvalid(view));
+            testCase.verifyEmpty(view.Stack);
+            testCase.verifyEmpty(view.RecordedStatuses);
+        end
+
+        function tDisplayedProgressUpdatesBeneathFilteredStatus(testCase, addFiltered)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            popup = statusMgr.view.Popup(figure, stack, ShowInfo=false, ExcludeIdentifiers="filtered");
+            testCase.addTeardown(@() delete(popup));
+            running = stack.addStatus("Running", Message="working", Value=0.1);
+            dialog = popup.ProgressDlg;
+            addFiltered(stack);
+
+            stack.updateStatus(running, Message="updated work", Value=0.8);
+
+            testCase.verifyEqual(popup.ProgressDlg, dialog);
+            testCase.verifyEqual(dialog.Value, 0.8);
+            testCase.verifyEqual(string(dialog.Message), "updated work");
+            testCase.verifyEqual(popup.IncomingStatus, running);
+        end
+
+        function tWorkerProgressUpdatesDisplayedStatusBeneathInfo(testCase)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            popup = statusMgr.view.Popup(figure, stack, ShowInfo=false);
+            testCase.addTeardown(@() delete(popup));
+            recorder = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(recorder));
+            running = stack.addStatus("Running", Value=0.1);
+            dialog = popup.ProgressDlg;
+            stack.addStatus("Info", Message="hidden");
+
+            statusMgr.Stack.onProgressFromWorker(matlab.lang.WeakReference(stack), ...
+                matlab.lang.WeakReference(running), struct(Value=0.8, Message="worker update"));
+
+            testCase.verifyEqual(popup.ProgressDlg, dialog);
+            testCase.verifyEqual(dialog.Value, 0.8);
+            testCase.verifyEqual(string(dialog.Message), "worker update");
+            testCase.verifyEqual(recorder.RecordedStatuses.Message(end), "worker update");
         end
     end
 end

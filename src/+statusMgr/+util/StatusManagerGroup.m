@@ -23,10 +23,28 @@ classdef StatusManagerGroup < handle
             % Release owned views only. The Stack is left untouched:
             % callers may still hold the handle returned by make(). Use
             % StatusManager.shutdown() to destroy stacks explicitly.
+            obj.disconnectViews();
             owned = obj.Views(obj.IsOwned);
             delete(owned(isvalid(owned)));
         end
 
+
+        function disconnectViews(obj)
+            % Keep handles for snapshot restoration, but stop active resources.
+            for view = obj.Views
+                if isvalid(view) && isequal(view.Stack, obj.Stack)
+                    view.setStack(statusMgr.Stack.empty(1,0));
+                end
+            end
+        end
+
+        function reconnectViews(obj)
+            for view = obj.Views
+                if isvalid(view) && isempty(view.Stack)
+                    view.setStack(obj.Stack);
+                end
+            end
+        end
 
         function obj = StatusManagerGroup()
             obj.Stack = statusMgr.Stack();
@@ -63,6 +81,9 @@ classdef StatusManagerGroup < handle
             owned = obj.IsOwned(idx);
             obj.Views(idx) = [];
             obj.IsOwned(idx) = [];
+            if isvalid(view) && isequal(view.Stack, obj.Stack)
+                view.setStack(statusMgr.Stack.empty(1,0));
+            end
             if owned
                 delete(view);
             end
@@ -125,6 +146,11 @@ classdef StatusManagerGroup < handle
             removed = obj.Views(mask);
             obj.Views(mask) = [];
             obj.IsOwned(mask) = [];
+            for view = removed
+                if isvalid(view) && isequal(view.Stack, obj.Stack)
+                    view.setStack(statusMgr.Stack.empty(1,0));
+                end
+            end
             if nvp.Delete
                 delete(removed);
             end

@@ -180,8 +180,9 @@ Copyright 2025 The MathWorks, Inc.
 
 `stack.run` and `stack.runCancellable` accept `Message`, `Identifier`, and an
 optional `SuccessMessage`/`SuccessIdentifier` (`SuccessIsTemporary=true` by default).
-They complete progress before publishing the outcome. Both `Args={...}` and
-positional function arguments are supported; use one form per call.
+They complete progress before publishing the outcome. Forward function arguments
+with `Args={...}`; positional function arguments are not supported. This keeps
+strings such as `"Message"` unambiguous when forwarded to the work function.
 
 Use `stack.invoke(@callback)` for UI callbacks: it reports uncaught exceptions
 and the last native MATLAB warning through the stack's views. Direct library
@@ -189,9 +190,17 @@ code can call `statusMgr.util.StatusManager.warning(id, message, ...)` or
 `reportError(exception)`. Keep `route = statusMgr.util.StatusManager.withStack(stack)`
 alive for a synchronous scope; nested routes restore the previous stack. Outside
 a route, diagnostics use the Default group. Configure its views before first use.
-`StatusManager.shutdown()` disposes of registry-owned resources without creating
-a replacement. Group removal disposes of its owned views and stack;
-`removeViews(..., Delete=false)` explicitly detaches borrowed views without deleting them.
+`StatusManager.clear(name)` and `clear()` disconnect group views and stop their
+active displays immediately, while preserving caller-held stacks. Snapshots
+keep inactive view handles so `snapshot()`/`restore()` can reconnect them without
+replaying log entries. Owned views are deleted when their group is released;
+borrowed views stay valid and can be rebound with `setStack`.
+`StatusManager.shutdown()` destroys currently registered groups and stacks without
+creating a replacement. It deletes only owned views and disconnects borrowed views.
+Groups previously removed with `clear` are already inactive; their remaining owners
+control their lifetime. `removeViews(..., Delete=false)` detaches matching views
+without deleting them. Custom views must accept an empty stack in `setStack` and
+release their listeners and active displays without deleting the view itself.
 
 `StatusUpdated` carries `StatusEventData.Change`: `Added`, `Updated`, or `Refresh`.
 Log views record additions and explicit updates (including updates below the top

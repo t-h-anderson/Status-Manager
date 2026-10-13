@@ -64,12 +64,18 @@ classdef StatusManager < handle
 
     methods (Static, Access = private)
 
-        function disposeGroupViews(smg)
-            % Delete the (still-valid) views held by a group. Used when a
-            % group is removed so its views don't outlive it.
-            if ~isempty(smg) && isvalid(smg)
-                views = smg.Views;
-                delete(views(isvalid(views)));
+        function disconnectGroups(obj, retained)
+            arguments
+                obj
+                retained = statusMgr.util.StatusManagerGroup.empty(1,0)
+            end
+            if ~isempty(obj) && isvalid(obj)
+                groups = values(obj.Groups);
+                for k = 1:numel(groups)
+                    if isvalid(groups(k)) && ~any(groups(k) == retained)
+                        groups(k).disconnectViews();
+                    end
+                end
             end
         end
 
@@ -130,11 +136,23 @@ classdef StatusManager < handle
 
         function restore(token)
             %RESTORE Restore the singleton to a previously snapshotted state.
+            current = statusMgr.util.StatusManager.instance("peek");
+            retained = statusMgr.util.StatusManagerGroup.empty(1,0);
+            if token.hasInstance && isvalid(token.instance)
+                retained = values(token.groups);
+            end
+            statusMgr.util.StatusManager.disconnectGroups(current, retained);
             if ~token.hasInstance
                 statusMgr.util.StatusManager.instance([]);
             elseif isvalid(token.instance)
                 statusMgr.util.StatusManager.instance(token.instance);
                 token.instance.Groups = token.groups;
+                groups = values(token.groups);
+                for k = 1:numel(groups)
+                    if isvalid(groups(k))
+                        groups(k).reconnectViews();
+                    end
+                end
             else
                 statusMgr.util.StatusManager.instance([]);
             end
@@ -198,9 +216,11 @@ classdef StatusManager < handle
             for k = 1:numel(groups)
                 group = groups(k);
                 if isvalid(group)
-                    statusMgr.util.StatusManager.disposeGroupViews(group);
-                    delete(group.Stack);
+                    stack = group.Stack;
+                    % Group disposal detaches borrowed views and deletes only
+                    % owned views before their stack is destroyed.
                     delete(group);
+                    delete(stack);
                 end
             end
             delete(obj);
@@ -283,20 +303,24 @@ classdef StatusManager < handle
             %CLEAR Remove a group by name, or all groups if no name is given.
             %
             % The group's Stack is left untouched — callers may still hold
-            % the handle returned by make(). Views the group owns are
-            % deleted when the group is released, i.e. once nothing else
-            % (a snapshot token, an addViewScoped cleanup, a retained
-            % group handle) still refers to it. This is what lets
-            % snapshot()/restore() bring a cleared registry back intact.
-            % Use shutdown() to dispose of everything immediately.
+            % the handle returned by make(). All views are disconnected and
+            % release their active displays immediately. Snapshots keep
+            % inactive view handles for restore(), which reconnects them.
+            % Owned views are deleted when their group is released;
+            % borrowed views remain reusable. shutdown() destroys currently
+            % registered groups/stacks; previously cleared groups are already
+            % inactive and can be released by their remaining owners.
             arguments
                 name (1,1) string = string(nan)
             end
 
             obj = statusMgr.util.StatusManager.instance();
             if ismissing(name)
+                statusMgr.util.StatusManager.disconnectGroups(obj);
                 statusMgr.util.StatusManager.instance(true);
             elseif isKey(obj.Groups, name)
+                group = obj.Groups(name);
+                group.disconnectViews();
                 obj.Groups = remove(obj.Groups, name);
             else
                 error("statusMgr:StatusManager:unknownGroup", ...

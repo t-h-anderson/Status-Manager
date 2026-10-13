@@ -584,7 +584,7 @@ classdef Stack < statusMgr.internal.StackInterface
             % (e.g. Ctrl+C while fcnHandle runs).
             runningStack = obj;
             statusGuard = onCleanup(@() ...
-                statusMgr.Stack.removeUnlessComplete(runningStack, status)); %#ok<NASGU>
+                statusMgr.Stack.removeUnlessComplete(runningStack, status));
             captor = [];
             if options.CatchWarnings
                 captor = statusMgr.util.WarningCapture();
@@ -1042,10 +1042,10 @@ classdef Stack < statusMgr.internal.StackInterface
             end
             if isnumeric(value) && isscalar(value)
                 status.updateValue(double(value));
-                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
+                statusMgr.Stack.notifyStatusUpdated(stack, status);
             elseif isstring(value) || (ischar(value) && (isrow(value) || isempty(value)))
                 status.updateMessage(string(value));
-                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
+                statusMgr.Stack.notifyStatusUpdated(stack, status);
             elseif isstruct(value)
                 if isfield(value, "Value")
                     status.updateValue(double(value.Value));
@@ -1054,7 +1054,7 @@ classdef Stack < statusMgr.internal.StackInterface
                     status.updateMessage(string(value.Message));
                 end
                 if isfield(value, "Value") || isfield(value, "Message")
-                    statusMgr.Stack.notifyIfCurrentStatus(stack, status);
+                    statusMgr.Stack.notifyStatusUpdated(stack, status);
                 else
                     warning("statusMgr:Stack:unhandledProgressValue", ...
                         "Progress struct has neither a Value nor a Message " + ...
@@ -1069,7 +1069,7 @@ classdef Stack < statusMgr.internal.StackInterface
             end
         end
 
-        function notifyIfCurrentStatus(stack, status)
+        function notifyStatusUpdated(stack, status)
             if isempty(stack) || ~isvalid(stack)
                 return
             end
@@ -1078,9 +1078,7 @@ classdef Stack < statusMgr.internal.StackInterface
             if ~any(idx)
                 return
             end
-            if stack.CurrentStatus.ID == status.ID
-                notify(stack, "StatusUpdated", statusMgr.monitorable.StatusEventData(status, "Updated"));
-            end
+            notify(stack, "StatusUpdated", statusMgr.monitorable.StatusEventData(status, "Updated"));
         end
 
         function onStatusCompletedCancelFuture(weakStack, status, future, pollTimer)
