@@ -231,13 +231,13 @@ classdef StatusManager < handle
             smg = statusMgr.util.StatusManagerGroup();
 
             if ~isempty(nvp.PopupParent)
-                smg.addView(statusMgr.view.Popup(nvp.PopupParent, smg.Stack));
+                smg.addView(statusMgr.view.Popup(nvp.PopupParent, smg.Stack), Owned=true);
             end
             if nvp.EnableCommandWindow
-                smg.addView(statusMgr.view.CommandWindow(smg.Stack));
+                smg.addView(statusMgr.view.CommandWindow(smg.Stack), Owned=true);
             end
             if ~ismissing(nvp.LogFolder)
-                smg.addView(statusMgr.view.FileLog(smg.Stack, LogFolder=nvp.LogFolder));
+                smg.addView(statusMgr.view.FileLog(smg.Stack, LogFolder=nvp.LogFolder), Owned=true);
             end
 
             obj.Groups(name) = smg;
@@ -303,7 +303,7 @@ classdef StatusManager < handle
                 nvp.Parent               = []
             end
             smg = statusMgr.util.StatusManager.get(name, Type="StatusManagerGroup");
-            smg.addView(statusMgr.view.Popup(nvp.Parent, smg.Stack));
+            smg.addView(statusMgr.view.Popup(nvp.Parent, smg.Stack), Owned=true);
         end
 
         function addCommandWindow(name)
@@ -312,7 +312,7 @@ classdef StatusManager < handle
                 name (1,1) string = "Default"
             end
             smg = statusMgr.util.StatusManager.get(name, Type="StatusManagerGroup");
-            smg.addView(statusMgr.view.CommandWindow(smg.Stack));
+            smg.addView(statusMgr.view.CommandWindow(smg.Stack), Owned=true);
         end
 
         function addFileLog(name, nvp)
@@ -322,7 +322,7 @@ classdef StatusManager < handle
                 nvp.LogFolder (1,1) string {mustBeFolder} = pwd
             end
             smg = statusMgr.util.StatusManager.get(name, Type="StatusManagerGroup");
-            smg.addView(statusMgr.view.FileLog(smg.Stack, LogFolder=nvp.LogFolder));
+            smg.addView(statusMgr.view.FileLog(smg.Stack, LogFolder=nvp.LogFolder), Owned=true);
         end
 
         function addView(name, view)

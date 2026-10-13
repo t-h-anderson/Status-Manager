@@ -12,9 +12,16 @@ classdef StatusManagerGroup < handle
             statusMgr.internal.view.StatusViewInterface.empty(1,0)
     end
 
+    properties (Access = private)
+        % Parallel to Views: true for views the group created or was
+        % handed ownership of. Only owned views are deleted with the group.
+        IsOwned (1,:) logical = false(1,0)
+    end
+
     methods
         function delete(obj)
-            delete(obj.Views);
+            owned = obj.Views(obj.IsOwned);
+            delete(owned(isvalid(owned)));
             delete(obj.Stack);
         end
 
@@ -23,18 +30,24 @@ classdef StatusManagerGroup < handle
             obj.Stack = statusMgr.Stack();
         end
 
-        function addView(obj, view)
+        function addView(obj, view, nvp)
             %ADDVIEW Connect view to this group's Stack and register it.
+            %   group.addView(view)              % caller keeps ownership
+            %   group.addView(view, Owned=true)  % deleted with the group
             arguments
                 obj  (1,1)
                 view (1,1) statusMgr.internal.view.StatusViewInterface
+                nvp.Owned (1,1) logical = false
             end
             view.setStack(obj.Stack);
             obj.Views = [obj.Views, view];
+            obj.IsOwned = [obj.IsOwned, nvp.Owned];
         end
 
         function removeView(obj, idx)
             %REMOVEVIEW Remove the view at position idx.
+            % Views the group owns are deleted; borrowed views are only
+            % detached from the group, so the caller can reuse them.
             arguments
                 obj (1,1)
                 idx (1,1) double {mustBeInteger, mustBePositive}
@@ -45,8 +58,12 @@ classdef StatusManagerGroup < handle
                     idx, numel(obj.Views));
             end
             view = obj.Views(idx);
+            owned = obj.IsOwned(idx);
             obj.Views(idx) = [];
-            delete(view);
+            obj.IsOwned(idx) = [];
+            if owned
+                delete(view);
+            end
         end
 
         function views = findViews(obj, nvp)
@@ -105,6 +122,7 @@ classdef StatusManagerGroup < handle
             % the index-shifting that reverse-order looping guards against.
             removed = obj.Views(mask);
             obj.Views(mask) = [];
+            obj.IsOwned(mask) = [];
             if nvp.Delete
                 delete(removed);
             end
@@ -123,7 +141,7 @@ classdef StatusManagerGroup < handle
                 view (1,1) statusMgr.internal.view.StatusViewInterface
                 nvp.Delete (1,1) logical = false
             end
-            obj.addView(view);
+            obj.addView(view, Owned=nvp.Delete);
             doDelete = nvp.Delete;
             cleanup = onCleanup(@() ...
                 statusMgr.util.StatusManagerGroup.scopedRemove(obj, view, doDelete));

@@ -275,6 +275,8 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.Silent (1,1) logical = false
             end
 
+            % Clean up every stack before reporting a completion failure.
+            failure = MException.empty(0,1);
             for ii = 1:numel(objs)
                 obj = objs(ii);
                 if ~isvalid(obj)
@@ -298,20 +300,23 @@ classdef Stack < statusMgr.internal.StackInterface
                 % attachStatus; drop the matching slots in lockstep.
                 delete(obj.StatusListeners(matchingIdx));
                 obj.StatusListeners(matchingIdx) = [];
-                failure = MException.empty(0,1);
                 try
                     toComplete.complete();
                 catch cause
-                    failure = cause;
+                    if isempty(failure)
+                        failure = cause;
+                    else
+                        failure = addCause(failure, cause);
+                    end
                 end
 
                 if ~nvp.Silent && isvalid(obj)
                     notify(obj, "StatusUpdated", statusMgr.monitorable.StatusEventData(obj.CurrentStatus, "Refresh"));
                 end
-                if ~isempty(failure)
-                    rethrow(failure);
-                end
 
+            end
+            if ~isempty(failure)
+                rethrow(failure);
             end
 
         end
@@ -491,6 +496,12 @@ classdef Stack < statusMgr.internal.StackInterface
             % Args is a cell of positional arguments forwarded to
             % fcnHandle (matching runInBackground's spelling). For a
             % zero-arg call, omit Args.
+            %
+            %   stack.run(@myFcn, arg1, arg2)
+            %
+            % Positional arguments are also accepted, but a string that
+            % matches an option name (e.g. "Message") is parsed as that
+            % option. Use Args={...} when forwarding arbitrary strings.
             arguments
                 obj (1,1) statusMgr.Stack
                 fcnHandle (1,1) function_handle
@@ -509,13 +520,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.SuccessIsTemporary (1,1) logical = true
             end
 
-            if ~isempty(varargin)
-                if ~isempty(nvp.Args)
-                    error("statusMgr:Stack:ambiguousArguments", ...
-                        "Supply positional arguments or Args, not both.");
-                end
-                nvp.Args = varargin;
-            end
+            nvp.Args = statusMgr.Stack.mergePositionalArgs(varargin, nvp.Args);
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("Running", false, ...
                 fcnHandle, nvp.Args, nvp);
@@ -564,13 +569,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.SuccessIsTemporary (1,1) logical = true
             end
 
-            if ~isempty(varargin)
-                if ~isempty(nvp.Args)
-                    error("statusMgr:Stack:ambiguousArguments", ...
-                        "Supply positional arguments or Args, not both.");
-                end
-                nvp.Args = varargin;
-            end
+            nvp.Args = statusMgr.Stack.mergePositionalArgs(varargin, nvp.Args);
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("RunningCancellable", true, ...
                 fcnHandle, nvp.Args, nvp);
@@ -594,12 +593,15 @@ classdef Stack < statusMgr.internal.StackInterface
 
             message = options.Message;
             if message == ""
-                fcnCallStr = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
-                    "Boundaries", "inclusive");
-                message = "Running: " + fcnCallStr;
+                message = "Running: " + statusMgr.Stack.functionLabel(fcnHandle);
             end
-            [status, statusCleanup] = obj.addStatus(statusType, ...
-                Message=message, Identifier=options.Identifier); %#ok<ASGLU>
+            status = obj.addStatus(statusType, ...
+                Message=message, Identifier=options.Identifier);
+            % Only acts if the explicit removal below is never reached
+            % (e.g. Ctrl+C while fcnHandle runs).
+            runningStack = obj;
+            statusGuard = onCleanup(@() ...
+                statusMgr.Stack.removeUnlessComplete(runningStack, status)); %#ok<NASGU>
             captor = [];
             if options.CatchWarnings
                 captor = statusMgr.util.WarningCapture();
@@ -615,21 +617,35 @@ classdef Stack < statusMgr.internal.StackInterface
                 failure = cause;
             end
 
-            % Finish progress before publishing the outcome. Removing it
-            % afterwards redisplays the outcome through StatusUpdated.
-            clear statusCleanup
-            if ~isvalid(obj)
-                obj = statusMgr.util.StatusManager.currentStack();
-            end
+            warningMsg = "";
             if options.CatchWarnings
                 [warningMsg, warningId] = captor.warning();
                 delete(captor);
-                if warningMsg ~= ""
-                    obj.addStatus("Warning", Identifier=warningId, Message=warningMsg);
-                end
+            end
+
+            % Finish progress before publishing the outcome. Removing it
+            % afterwards redisplays the outcome through StatusUpdated.
+            % Remove it explicitly, after warnings are restored, so a
+            % failing CompletionFcn reaches the caller instead of being
+            % swallowed by an onCleanup destructor.
+            completionFailure = MException.empty(0,1);
+            try
+                statusMgr.Stack.removeUnlessComplete(obj, status);
+            catch cause
+                completionFailure = cause;
+            end
+
+            if ~isvalid(obj)
+                obj = statusMgr.util.StatusManager.currentStack();
+            end
+            if warningMsg ~= ""
+                obj.addStatus("Warning", Identifier=warningId, Message=warningMsg);
             end
             if ~isempty(failure)
                 if ~options.CatchErrors
+                    if ~isempty(completionFailure)
+                        failure = addCause(failure, completionFailure);
+                    end
                     rethrow(failure);
                 end
                 obj.addError(failure);
@@ -637,6 +653,9 @@ classdef Stack < statusMgr.internal.StackInterface
                 obj.addStatus("Success", Identifier=options.SuccessIdentifier, ...
                     Message=options.SuccessMessage, MessageShort=options.SuccessMessage, ...
                     IsTemporary=options.SuccessIsTemporary);
+            end
+            if ~isempty(completionFailure)
+                rethrow(completionFailure);
             end
         end
 
@@ -1009,9 +1028,16 @@ classdef Stack < statusMgr.internal.StackInterface
             end
             % Worker completion can precede delivery of its queued progress.
             % Let the event loop drain those callbacks before disposing of
-            % the subscription and completing the status.
+            % the subscription and completing the status. The wait is
+            % bounded: a queue shared with other producers may never empty.
             if ~isempty(progressQueue) && progressQueue.QueueLength > 0
-                return
+                drainLimit = 2; % seconds
+                if isempty(pollTimer.UserData)
+                    pollTimer.UserData = tic;
+                    return
+                elseif toc(pollTimer.UserData) < drainLimit
+                    return
+                end
             end
             statusMgr.util.stopTimer(pollTimer);
             if ~isempty(future.Error)
@@ -1091,6 +1117,26 @@ classdef Stack < statusMgr.internal.StackInterface
         function label = functionLabel(fcnHandle)
             label = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
                 "Boundaries", "inclusive");
+        end
+
+        function args = mergePositionalArgs(positional, args)
+            % Shared by run() and runCancellable(): positional arguments
+            % and Args= are alternative spellings, not combinable.
+            if isempty(positional)
+                return
+            end
+            if ~isempty(args)
+                error("statusMgr:Stack:ambiguousArguments", ...
+                    "Supply positional arguments or Args, not both.");
+            end
+            args = positional;
+        end
+
+        function removeUnlessComplete(stack, status)
+            % Remove a run() status unless it has already been completed.
+            if isvalid(stack) && isvalid(status) && ~status.IsComplete
+                stack.removeStatus(status);
+            end
         end
 
     end

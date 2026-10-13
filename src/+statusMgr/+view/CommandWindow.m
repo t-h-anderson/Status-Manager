@@ -58,6 +58,17 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
             obj.clearRunning();
         end
 
+        function displayBackgroundUpdate(obj, status)
+            % Print progress beneath the top of the stack without touching
+            % the running indicator, which belongs to the current status.
+            if ismember(status.Type, [statusMgr.StatusType.Running, ...
+                    statusMgr.StatusType.RunningCancellable])
+                obj.writeToTerminal(status.Message);
+            else
+                displayBackgroundUpdate@statusMgr.internal.view.StatusViewBase(obj, status);
+            end
+        end
+
         function displayRunning(obj, status, ~)
             arguments
                 obj (1,1) statusMgr.view.CommandWindow

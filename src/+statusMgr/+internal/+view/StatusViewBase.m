@@ -83,7 +83,18 @@ classdef (Abstract) StatusViewBase < ...
 
             %Get the latest status
             latestStatus = stack.CurrentStatus;
-            if ~obj.RefreshOnRemoval && isa(eventData, "statusMgr.monitorable.StatusEventData")
+            isStatusEvent = isa(eventData, "statusMgr.monitorable.StatusEventData");
+            if isStatusEvent && eventData.Change == "Updated" ...
+                    && eventData.Status.ID ~= latestStatus.ID
+                % An explicit update beneath the top of the stack. Log
+                % views record it without disturbing the status they are
+                % tracking; views showing the top have nothing new to show.
+                if ~obj.RefreshOnRemoval && obj.shouldDisplayStatus(eventData.Status)
+                    obj.displayBackgroundUpdate(eventData.Status);
+                end
+                return
+            end
+            if ~obj.RefreshOnRemoval && isStatusEvent
                 latestStatus = eventData.Status;
             end
 
@@ -94,35 +105,12 @@ classdef (Abstract) StatusViewBase < ...
             % Only replace the current display when its replacement will
             % actually be shown. Filtered statuses leave it intact.
             obj.beforeDisplay();
-            latestType = latestStatus.Type;
 
             % Save the status in case this is needed for a view
             obj.PreviousStatus = obj.IncomingStatus;
             obj.IncomingStatus = latestStatus;
 
-            % Display a pop-up
-            switch latestType
-                case statusMgr.StatusType.Info
-                    obj.displayInfo_(latestStatus);
-                case statusMgr.StatusType.Running
-                    obj.displayRunning_(latestStatus, false);
-                case statusMgr.StatusType.RunningCancellable
-                    obj.displayRunning_(latestStatus, true);
-                case statusMgr.StatusType.Error
-                    obj.displayError_(latestStatus);
-                case statusMgr.StatusType.Warning
-                    obj.displayWarning_(latestStatus);
-                case statusMgr.StatusType.Success
-                    obj.displaySuccess_(latestStatus);
-                case statusMgr.StatusType.Idle
-                    obj.displayIdle_(latestStatus);
-                case statusMgr.StatusType.RequestingInput
-                    obj.handleInputRequest_(latestStatus);
-                case {statusMgr.StatusType.AwaitingInput, statusMgr.StatusType.ValueSupplied}
-                    % Intermediate input states — no display action needed.
-                otherwise
-                    error("Unknown status type");
-            end % switch
+            obj.dispatchDisplay(latestStatus);
 
         end % standardDisplay
 
@@ -140,6 +128,41 @@ classdef (Abstract) StatusViewBase < ...
     end
 
     methods (Access = protected)
+
+        function displayBackgroundUpdate(obj, status)
+            % Display an update to a status beneath the top of the stack.
+            % Overload when a display has side effects tied to the current
+            % status (e.g. progress indicators). Input requests are only
+            % handled when they reach the top of the stack.
+            if status.Type ~= statusMgr.StatusType.RequestingInput
+                obj.dispatchDisplay(status);
+            end
+        end
+
+        function dispatchDisplay(obj, status)
+            switch status.Type
+                case statusMgr.StatusType.Info
+                    obj.displayInfo_(status);
+                case statusMgr.StatusType.Running
+                    obj.displayRunning_(status, false);
+                case statusMgr.StatusType.RunningCancellable
+                    obj.displayRunning_(status, true);
+                case statusMgr.StatusType.Error
+                    obj.displayError_(status);
+                case statusMgr.StatusType.Warning
+                    obj.displayWarning_(status);
+                case statusMgr.StatusType.Success
+                    obj.displaySuccess_(status);
+                case statusMgr.StatusType.Idle
+                    obj.displayIdle_(status);
+                case statusMgr.StatusType.RequestingInput
+                    obj.handleInputRequest_(status);
+                case {statusMgr.StatusType.AwaitingInput, statusMgr.StatusType.ValueSupplied}
+                    % Intermediate input states — no display action needed.
+                otherwise
+                    error("Unknown status type");
+            end % switch
+        end
 
         function cleanupCompletedStatus(obj) %#ok<MANU>
             % Release resources belonging to completed statuses.

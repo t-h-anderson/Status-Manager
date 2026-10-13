@@ -408,6 +408,75 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             running.complete();
             testCase.verifyFalse(isvalid(dialog));
         end
+
+        function tUpdateBeneathTopDoesNotRedrawPopup(testCase)
+            figure = uifigure();
+            testCase.addTeardown(@() delete(figure));
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            popup = statusMgr.view.Popup(figure, stack);
+            testCase.addTeardown(@() delete(popup));
+            running = stack.addStatus("Running", Message="working");
+            warningStatus = stack.addStatus("Warning", Message="on top");
+            testCase.assertEqual(popup.PreviousStatus, running);
+            stack.updateStatus(running, Value=0.3);
+            testCase.verifyEqual(popup.IncomingStatus, warningStatus);
+            testCase.verifyEqual(popup.PreviousStatus, running);
+            testCase.verifyTrue(popup.HasPopup);
+        end
+
+        function tTerminalUpdateBeneathKeepsRunningIndicator(testCase)
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            terminal = statusMgr.view.CommandWindow(stack);
+            testCase.addTeardown(@() delete(terminal));
+            evalc('outer = stack.addStatus("Running", Message="outer");');
+            evalc('inner = stack.addStatus("Running", Message="inner");');
+            timer = terminal.RunningTimer;
+            output = evalc('stack.updateStatus(outer, Message="outer progress");');
+            testCase.verifySubstring(output, "outer progress");
+            testCase.verifyTrue(isvalid(timer));
+            testCase.verifyEqual(terminal.IncomingStatus, inner);
+            evalc('inner.complete();');
+            testCase.verifyFalse(isvalid(timer));
+            testCase.verifyTrue(isempty(terminal.RunningTimer) || ~isvalid(terminal.RunningTimer));
+            evalc('outer.complete();');
+        end
+
+        function tBorrowedViewSurvivesRemovalAndClear(testCase)
+            stack = statusMgr.util.StatusManager.make("borrowed");
+            other = statusMgr.Stack();
+            testCase.addTeardown(@() delete(other));
+            view = statusMgr.view.RecordingView(other);
+            testCase.addTeardown(@() delete(view));
+            statusMgr.util.StatusManager.addView("borrowed", view);
+            statusMgr.util.StatusManager.removeView("borrowed", 1);
+            testCase.verifyTrue(isvalid(view));
+            cleanup = statusMgr.util.StatusManager.addViewScoped("borrowed", view); %#ok<NASGU>
+            statusMgr.util.StatusManager.clear("borrowed");
+            clear cleanup
+            testCase.verifyTrue(isvalid(view));
+            testCase.verifyFalse(isvalid(stack));
+        end
+
+        function tRemovalFailureStillCleansLaterStacks(testCase)
+            first = statusMgr.Stack();
+            second = statusMgr.Stack();
+            testCase.addTeardown(@() delete(first));
+            testCase.addTeardown(@() delete(second));
+            failing = first.addStatus("Info", CompletionFcn=@(~) error("test:completion", "failed"));
+            other = second.addStatus("Info", Message="other");
+            testCase.verifyError(@() removeStatus([first second], [failing other]), "test:completion");
+            testCase.verifyTrue(other.IsComplete);
+            testCase.verifyEqual(second.CurrentStatus.Type, statusMgr.StatusType.Idle);
+        end
+
+        function tRunRethrowsCompletionFailure(testCase)
+            stack = inttest.helpers.FailingRemovalStack();
+            testCase.addTeardown(@() delete(stack));
+            testCase.verifyError(@() stack.run(@() 42), "test:completion");
+            testCase.verifyEqual(stack.CurrentStatus.Type, statusMgr.StatusType.Idle);
+        end
     end
 end
 
