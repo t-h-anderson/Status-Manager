@@ -584,7 +584,7 @@ classdef Stack < statusMgr.internal.StackInterface
             % (e.g. Ctrl+C while fcnHandle runs).
             runningStack = obj;
             statusGuard = onCleanup(@() ...
-                statusMgr.Stack.removeUnlessComplete(runningStack, status));
+                statusMgr.Stack.removeUnlessComplete(runningStack, status)); %#ok<NASGU>
             captor = [];
             if options.CatchWarnings
                 captor = statusMgr.util.WarningCapture();
@@ -1027,46 +1027,6 @@ classdef Stack < statusMgr.internal.StackInterface
                 stack.addError(future.Error);
             end
             status.complete();
-        end
-
-        function onProgressFromWorker(weakStack, weakStatus, value)
-            % Translate a value sent on the progress DataQueue into a
-            % status update. Numeric scalar → Value; string → Message;
-            % struct with Value/Message → both. If the stack or status
-            % has been GC'd by the user, drop the update silently.
-            stack = weakStack.Handle;
-            status = weakStatus.Handle;
-            if isempty(stack) || isempty(status) ...
-                    || ~isvalid(stack) || ~isvalid(status)
-                return
-            end
-            if isnumeric(value) && isscalar(value)
-                status.updateValue(double(value));
-                statusMgr.Stack.notifyStatusUpdated(stack, status);
-            elseif isstring(value) || (ischar(value) && (isrow(value) || isempty(value)))
-                status.updateMessage(string(value));
-                statusMgr.Stack.notifyStatusUpdated(stack, status);
-            elseif isstruct(value)
-                if isfield(value, "Value")
-                    status.updateValue(double(value.Value));
-                end
-                if isfield(value, "Message")
-                    status.updateMessage(string(value.Message));
-                end
-                if isfield(value, "Value") || isfield(value, "Message")
-                    statusMgr.Stack.notifyStatusUpdated(stack, status);
-                else
-                    warning("statusMgr:Stack:unhandledProgressValue", ...
-                        "Progress struct has neither a Value nor a Message " + ...
-                        "field; no update applied. Send a numeric scalar, a " + ...
-                        "string, or a struct with Value and/or Message fields.");
-                end
-            else
-                warning("statusMgr:Stack:unhandledProgressValue", ...
-                    "Progress value of type '%s' (size %s) was ignored. Send a " + ...
-                    "numeric scalar, a string, or a struct with Value and/or " + ...
-                    "Message fields.", class(value), mat2str(size(value)));
-            end
         end
 
         function notifyStatusUpdated(stack, status)

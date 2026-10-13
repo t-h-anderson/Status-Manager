@@ -711,8 +711,10 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             dialog = popup.ProgressDlg;
             stack.addStatus("Info", Message="hidden");
 
-            statusMgr.Stack.onProgressFromWorker(matlab.lang.WeakReference(stack), ...
-                matlab.lang.WeakReference(running), struct(Value=0.8, Message="worker update"));
+            % Drive the callback the DataQueue subscription uses in production.
+            statusMgr.internal.futureProgressRegistry("register", running.ID, stack, running);
+            testCase.addTeardown(@() statusMgr.internal.futureProgressRegistry("unregister", running.ID));
+            statusMgr.internal.onFutureProgress(running.ID, struct(Value=0.8, Message="worker update"));
 
             testCase.verifyEqual(popup.ProgressDlg, dialog);
             testCase.verifyEqual(dialog.Value, 0.8);

@@ -106,6 +106,27 @@ classdef tBackgroundFuture < matlab.unittest.TestCase
             end
         end
 
+        function tProgressQueueUpdatesReachViews(testCase)
+            % End to end through the DataQueue subscription: views must
+            % be notified of each progress update, not just the Status.
+            S = statusMgr.Stack();
+            recorder = statusMgr.view.RecordingView(S);
+            testCase.addTeardown(@() delete(recorder));
+            queue = parallel.pool.DataQueue;
+            % A local (not nested) worker function: a nested one would
+            % carry the recorder and its listener to the worker.
+            f = parfeval(backgroundPool, @sendProgressSteps, 0, queue);
+            testCase.addTeardown(@() cancel(f));
+
+            status = S.monitorFuture(f, ProgressQueue=queue, PollPeriod=0.05);
+
+            wait(f);
+            testCase.waitUntil(@() status.IsComplete, 3);
+
+            testCase.verifyEqual(recorder.RecordedStatuses.Message(2:end), ...
+                ["step 1 of 3"; "step 2 of 3"; "step 3 of 3"])
+        end
+
         function tRunInBackgroundLaunchesAndMonitors(testCase)
             % runInBackground = parfeval + monitorFuture.
             S = statusMgr.Stack();
@@ -135,9 +156,9 @@ classdef tBackgroundFuture < matlab.unittest.TestCase
 
             % Wait for the progress message to actually land in the
             % status BEFORE waiting for completion. Once the future
-            % finishes the poll timer marks status.IsComplete, after
-            % which onProgressFromWorker early-returns and any
-            % still-in-flight queue messages would be dropped.
+            % finishes the poll timer marks status.IsComplete and tears
+            % down monitoring, after which onFutureProgress early-returns
+            % and any still-in-flight queue messages would be dropped.
             testCase.waitUntil(@() status.Message == "done", 3);
 
             wait(future);
@@ -156,7 +177,7 @@ classdef tBackgroundFuture < matlab.unittest.TestCase
                 % * After — give the message round-trip time to land
                 %   before the future completes; if the future
                 %   finishes first, the poll timer marks the status
-                %   IsComplete and onProgressFromWorker drops the
+                %   IsComplete and onFutureProgress drops the
                 %   incoming update.
                 pause(0.1);
                 send(q, "done");
@@ -218,4 +239,11 @@ classdef tBackgroundFuture < matlab.unittest.TestCase
 
     end
 
+end
+
+function sendProgressSteps(q)
+    for i = 1:3
+        send(q, "step " + i + " of 3");
+        pause(0.02);
+    end
 end
