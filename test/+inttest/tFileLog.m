@@ -170,7 +170,8 @@ classdef tFileLog < matlab.uitest.TestCase
             testCase.verifyTrue(endsWith(lines(2), "[Running] [Value=1] r1"))
             testCase.verifyTrue(endsWith(lines(3), "[Warning] w1"))
             testCase.verifyTrue(endsWith(lines(4), "[Error] e1"))
-            testCase.verifyEqual(lines(5), "")
+            testCase.verifyTrue(endsWith(lines(5), "[Running] [Value=1] r2"))
+            testCase.verifyEqual(lines(6), "")
         end
 
         function tReuseExistingLogFile(testCase)

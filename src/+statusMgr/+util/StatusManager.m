@@ -35,12 +35,30 @@ classdef StatusManager < handle
     %   % ... when `cleanup` is cleared, the view is removed from the group.
 
     properties (Access = private)
+        Routes (1,:) cell = {}
+        RouteIds (1,:) string = string.empty(1,0)
         Groups (1,1) dictionary = configureDictionary("string", "statusMgr.util.StatusManagerGroup")
     end
 
     methods (Access = private)
+        function releaseRoute(obj, id)
+            if isvalid(obj)
+                idx = obj.RouteIds == id;
+                obj.Routes(idx) = [];
+                obj.RouteIds(idx) = [];
+            end
+        end
         function obj = StatusManager()
             obj.Groups = configureDictionary("string", "statusMgr.util.StatusManagerGroup");
+        end
+    end
+
+    methods
+        function delete(obj)
+            groups = values(obj.Groups);
+            for k = 1:numel(groups)
+                delete(groups(k));
+            end
         end
     end
 
@@ -126,6 +144,69 @@ classdef StatusManager < handle
 
     methods (Static)
 
+        function cleanup = withStack(stack)
+            % Route synchronous library diagnostics to this workflow's stack.
+            % Keep cleanup alive for the scope; nested scopes restore their
+            % caller's route, including when an exception unwinds the scope.
+            arguments
+                stack (1,1) statusMgr.Stack
+            end
+            obj = statusMgr.util.StatusManager.instance();
+            id = statusMgr.util.uuid();
+            obj.RouteIds(end+1) = id;
+            obj.Routes{end+1} = stack;
+            cleanup = onCleanup(@() obj.releaseRoute(id));
+        end
+
+        function stack = currentStack()
+            % Resolve the innermost live route, otherwise the Default group.
+            obj = statusMgr.util.StatusManager.instance();
+            for k = numel(obj.Routes):-1:1
+                if isvalid(obj.Routes{k})
+                    stack = obj.Routes{k};
+                    return
+                end
+            end
+            stack = statusMgr.util.StatusManager.make("Default", EnableCommandWindow=true);
+        end
+
+        function warning(identifier, message, varargin)
+            % Log a warning. Format only when arguments are supplied, so a
+            % literal path or percent sign in a message remains unchanged.
+            if ~isempty(varargin)
+                message = sprintf(message, varargin{:});
+            end
+            stack = statusMgr.util.StatusManager.currentStack();
+            stack.addStatus("Warning", Identifier=identifier, ...
+                Message=message, MessageShort=message);
+        end
+
+        function reportError(cause)
+            % Report a handled failure; callers retain exception semantics.
+            stack = statusMgr.util.StatusManager.currentStack();
+            stack.addError(cause);
+        end
+
+        function shutdown()
+            % Release owned resources without constructing a replacement.
+            obj = statusMgr.util.StatusManager.instance("peek");
+            statusMgr.util.StatusManager.instance([]);
+            if isempty(obj) || ~isvalid(obj)
+                return
+            end
+            groups = values(obj.Groups);
+            for k = 1:numel(groups)
+                group = groups(k);
+                if isvalid(group)
+                    statusMgr.util.StatusManager.disposeGroupViews(group);
+                    delete(group.Stack);
+                    delete(group);
+                end
+            end
+            delete(obj);
+        end
+
+
         function stack = make(name, nvp)
             %MAKE Return or create a named stack with groups attached.
             %
@@ -200,25 +281,14 @@ classdef StatusManager < handle
 
         function clear(name)
             %CLEAR Remove a group by name, or all groups if no name is given.
-            %
-            % A removed group's views are deleted, otherwise each view's
-            % StatusUpdated listener keeps it (and the objects it
-            % references) alive until MATLAB's session-end cycle GC. The
-            % group's Stack is left untouched — callers may still hold the
-            % handle returned by make().
             arguments
                 name (1,1) string = string(nan)
             end
 
             obj = statusMgr.util.StatusManager.instance();
             if ismissing(name)
-                ks = keys(obj.Groups);
-                for i = 1:numel(ks)
-                    statusMgr.util.StatusManager.disposeGroupViews(obj.Groups(ks(i)));
-                end
                 statusMgr.util.StatusManager.instance(true);
             elseif isKey(obj.Groups, name)
-                statusMgr.util.StatusManager.disposeGroupViews(obj.Groups(name));
                 obj.Groups = remove(obj.Groups, name);
             else
                 error("statusMgr:StatusManager:unknownGroup", ...

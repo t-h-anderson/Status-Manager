@@ -56,21 +56,18 @@ classdef tRecordingView < matlab.unittest.TestCase
         end
 
         function tShowIdleOptIn(testCase)
-            % Idle is off by default; turning it on records the Idle
-            % statuses that the stack falls back to.
-            S = statusMgr.Stack();
-            viewDefault = statusMgr.view.RecordingView(S);
-            testCase.addTeardown(@() delete(viewDefault))
-            viewWithIdle = statusMgr.view.RecordingView(S, ShowIdle=true);
-            testCase.addTeardown(@() delete(viewWithIdle))
-
-            S.addStatus("Info", Message="hi");
-            S.removeAllStatuses(); % returns stack to Idle
-
-            testCase.verifySize(viewDefault.RecordedStatuses, [1 13])
-            % viewWithIdle saw the Idle pushed at construction-time
-            % too via the same listener path.
-            testCase.verifyGreaterThan(height(viewWithIdle.RecordedStatuses), 1)
+            % Explicit Idle entries are recorded; stack-removal refreshes are not.
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            ordinary = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(ordinary));
+            withIdle = statusMgr.view.RecordingView(stack, ShowIdle=true);
+            testCase.addTeardown(@() delete(withIdle));
+            stack.addStatus("Info", Message="hi");
+            stack.addStatus("Idle", Message="explicit idle");
+            stack.removeAllStatuses();
+            testCase.verifyEqual(ordinary.RecordedStatuses.Type, "Info");
+            testCase.verifyEqual(withIdle.RecordedStatuses.Type, ["Info"; "Idle"]);
         end
 
         function tClearEmptiesHistory(testCase)

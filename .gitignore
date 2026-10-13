@@ -2,3 +2,6 @@
 
 # CI test artifacts
 test-results/
+
+# Local MATLAB test reports
+/test/artifacts/

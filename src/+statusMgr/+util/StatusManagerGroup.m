@@ -13,6 +13,11 @@ classdef StatusManagerGroup < handle
     end
 
     methods
+        function delete(obj)
+            delete(obj.Views);
+            delete(obj.Stack);
+        end
+
 
         function obj = StatusManagerGroup()
             obj.Stack = statusMgr.Stack();
@@ -39,7 +44,9 @@ classdef StatusManagerGroup < handle
                     "View index %d exceeds number of views (%d).", ...
                     idx, numel(obj.Views));
             end
+            view = obj.Views(idx);
             obj.Views(idx) = [];
+            delete(view);
         end
 
         function views = findViews(obj, nvp)

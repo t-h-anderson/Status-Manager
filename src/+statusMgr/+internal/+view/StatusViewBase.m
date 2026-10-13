@@ -19,6 +19,7 @@ classdef (Abstract) StatusViewBase < ...
         % hold a shared Status instance alive for the whole session, which
         % warns at teardown once the path is gone. standardDisplay assigns
         % the real status before any display method reads it.
+        RefreshOnRemoval (1,1) logical = true
         IncomingStatus (1,:) statusMgr.Status {mustBeScalarOrEmpty} = statusMgr.Status.empty(1,0)
         PreviousStatus (1,:) statusMgr.Status {mustBeScalarOrEmpty} = statusMgr.Status.empty(1,0)
     end
@@ -56,13 +57,25 @@ classdef (Abstract) StatusViewBase < ...
 
     methods
 
-        function standardDisplay(obj)
+        function standardDisplay(obj, eventData)
             % Method for displaying the status supplied to the Stack manager
             arguments
                 obj (1,1)
+                eventData = []
             end
 
-            if ~obj.isVisible() || ~isvalid(obj)
+            if ~isvalid(obj)
+                return
+            end
+            % Release completed resources even while the view is hidden.
+            obj.cleanupCompletedStatus();
+
+            if ~obj.RefreshOnRemoval && isa(eventData, "statusMgr.monitorable.StatusEventData") ...
+                    && eventData.Change == "Refresh"
+                return
+            end
+
+            if ~obj.isVisible()
                 return
             end
 
@@ -70,22 +83,22 @@ classdef (Abstract) StatusViewBase < ...
 
             %Get the latest status
             latestStatus = stack.CurrentStatus;
+            if ~obj.RefreshOnRemoval && isa(eventData, "statusMgr.monitorable.StatusEventData")
+                latestStatus = eventData.Status;
+            end
 
-            if ~latestStatus.IsVisible
+            if ~obj.shouldDisplayStatus(latestStatus)
                 return
             end
 
-            if ~obj.passesIdentifierFilters(latestStatus.Identifier)
-                return
-            end
-
+            % Only replace the current display when its replacement will
+            % actually be shown. Filtered statuses leave it intact.
+            obj.beforeDisplay();
             latestType = latestStatus.Type;
 
             % Save the status in case this is needed for a view
             obj.PreviousStatus = obj.IncomingStatus;
             obj.IncomingStatus = latestStatus;
-
-            obj.beforeDisplay();
 
             % Display a pop-up
             switch latestType
@@ -118,10 +131,8 @@ classdef (Abstract) StatusViewBase < ...
         end
 
         function setStack(obj, stack)
-            % Detach from any previous stack before rebinding so a
-            % re-bound view does not keep firing for the old stack.
             delete(obj.StackListener);
-            updateStatusFn = @(src, event) obj.standardDisplay();
+            updateStatusFn = @(src, event) obj.standardDisplay(event);
             obj.Stack = stack;
             obj.StackListener = listener(stack, "StatusUpdated", updateStatusFn);
         end
@@ -129,6 +140,36 @@ classdef (Abstract) StatusViewBase < ...
     end
 
     methods (Access = protected)
+
+        function cleanupCompletedStatus(obj) %#ok<MANU>
+            % Release resources belonging to completed statuses.
+        end
+
+        function tf = shouldDisplayStatus(obj, status)
+            tf = status.IsVisible && obj.passesIdentifierFilters(status.Identifier);
+            if ~tf
+                return
+            end
+            switch status.Type
+                case statusMgr.StatusType.Info
+                    tf = obj.ShowInfo;
+                case {statusMgr.StatusType.Running, statusMgr.StatusType.RunningCancellable}
+                    tf = obj.ShowRunning;
+                case statusMgr.StatusType.Error
+                    tf = obj.ShowErrors;
+                case statusMgr.StatusType.Warning
+                    tf = obj.ShowWarnings;
+                case statusMgr.StatusType.Success
+                    tf = obj.ShowSuccess;
+                case statusMgr.StatusType.Idle
+                    tf = obj.ShowIdle;
+                case statusMgr.StatusType.RequestingInput
+                    tf = obj.HandleInputRequests;
+                otherwise
+                    tf = false;
+            end
+        end
+
 
         function tf = passesIdentifierFilters(obj, identifier)
             % Apply IncludeIdentifiers + ExcludeIdentifiers globs.

@@ -78,6 +78,17 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
 
     methods (Access = protected)
         % These methods can be overloaded to tailor the view behaviour
+        function cleanupCompletedStatus(obj)
+            if ~isempty(obj.ProgressDlgStatus) && ...
+                    (~isvalid(obj.ProgressDlgStatus) || obj.ProgressDlgStatus.IsComplete)
+                obj.deleteProgressDlg();
+            end
+            if obj.HasPopup && ~isempty(obj.IncomingStatus) && ...
+                    (~isvalid(obj.IncomingStatus) || obj.IncomingStatus.IsComplete)
+                obj.clearPreviousAlert(obj.Figure);
+            end
+        end
+
         function beforeDisplay(obj)
             obj.clearPreviousAlert(obj.Figure);
             obj.checkProgressDlg();

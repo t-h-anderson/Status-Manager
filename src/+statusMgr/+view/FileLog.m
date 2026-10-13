@@ -56,6 +56,7 @@ classdef FileLog < statusMgr.internal.view.StatusSinkViewBase
             end
 
             % Set view parent and stack properties
+            obj.RefreshOnRemoval = false;
             obj.setStack(stack);
             set(obj, nvp);
 

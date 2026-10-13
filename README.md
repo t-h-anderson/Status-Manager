@@ -175,3 +175,30 @@ The license is available in the [license.txt](license.txt) file in this GitHub r
 [MATLAB Central](https://www.mathworks.com/matlabcentral)
 
 Copyright 2025 The MathWorks, Inc.
+
+### Scoped diagnostics and lifecycle
+
+`stack.run` and `stack.runCancellable` accept `Message`, `Identifier`, and an
+optional `SuccessMessage`/`SuccessIdentifier` (`SuccessIsTemporary=true` by default).
+They complete progress before publishing the outcome. Both `Args={...}` and
+positional function arguments are supported; use one form per call.
+
+Use `stack.invoke(@callback)` for UI callbacks: it reports uncaught exceptions
+and the last native MATLAB warning through the stack's views. Direct library
+code can call `statusMgr.util.StatusManager.warning(id, message, ...)` or
+`reportError(exception)`. Keep `route = statusMgr.util.StatusManager.withStack(stack)`
+alive for a synchronous scope; nested routes restore the previous stack. Outside
+a route, diagnostics use the Default group. Configure its views before first use.
+`StatusManager.shutdown()` disposes of registry-owned resources without creating
+a replacement. Group removal disposes of its owned views and stack;
+`removeViews(..., Delete=false)` explicitly detaches borrowed views without deleting them.
+
+`StatusUpdated` carries `StatusEventData.Change`: `Added`, `Updated`, or `Refresh`.
+Log views record additions and explicit updates (including updates below the top
+of the stack), while display refreshes do not create duplicate log entries.
+Command-window warnings are printed without issuing a second MATLAB warning;
+repeated warnings and errors are always printed in full. Hidden/filtered statuses
+preserve the current popup or progress display, and completion cleans up its
+resources even when the parent figure is hidden. A failed completion callback
+does not suppress other callbacks or completion notifications; its exception is
+rethrown after cleanup, with further callback failures retained as causes.

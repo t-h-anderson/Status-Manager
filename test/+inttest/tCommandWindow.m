@@ -37,7 +37,7 @@ classdef tCommandWindow < matlab.uitest.TestCase
             testCase.CommandWindowView.ShowInfo = false;
             testCase.Stack.addStatus("Info", Message="i2");
             testCase.verifyFalse(testCase.CommandWindowView.ShowInfo)
-            testCase.verifyEqual(testCase.CommandWindowView.IncomingStatus.Message, "i2");
+            testCase.verifyEqual(testCase.CommandWindowView.IncomingStatus.Message, "i1");
             % "i2" was suppressed by ShowInfo=false, so PreviousMessage
             % keeps tracking the last *displayed* message ("i1"). This
             % is what the dot-collapse logic in writeToTerminal needs.
@@ -59,23 +59,15 @@ classdef tCommandWindow < matlab.uitest.TestCase
         end
         
         function tDisplayWarning(testCase)
-            fcn = @() testCase.Stack.addStatus("Warning", Message="w1", Identifier="a:b");
-            testCase.verifyWarning(fcn, "a:b")
+            output = evalc('testCase.verifyWarningFree(@() testCase.Stack.addStatus("Warning", Message="w1", Identifier="a:b"));');
+            testCase.verifyEqual(string(output), "Warning: w1" + newline);
         end
 
         function tDisplayError(testCase)
-
-            me = MException("a:b:c", "test error a:b:c");
-
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addError(me);
-
-            lines = strjoin(readlines(diaryFile), newline);
-            testCase.verifyTrue(contains(lines, "test error a:b:c"));
-
-            testCase.verifyEqual(testCase.CommandWindowView.PreviousMessage, string(me.getReport()));
-
+            cause = MException("a:b:c", "test error a:b:c");
+            output = evalc('testCase.Stack.addError(cause);');
+            testCase.verifySubstring(output, "test error a:b:c");
+            testCase.verifyEqual(testCase.CommandWindowView.PreviousMessage, string(cause.getReport()));
         end
 
         function tDisplayIdle(testCase)
@@ -222,94 +214,38 @@ classdef tCommandWindow < matlab.uitest.TestCase
         end
 
         function tDisplayErrorWithoutMException(testCase)
-            % Error statuses with non-MException (or empty) Data take the
-            % "Error: <message>" branch instead of the getReport path.
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addStatus("Error", Message="bare message");
-
-            lines = strjoin(readlines(diaryFile), newline);
-            testCase.verifyTrue(contains(lines, "Error: bare message"));
+            output = evalc('testCase.Stack.addStatus("Error", Message="bare message");');
+            testCase.verifyEqual(string(output), "Error: bare message" + newline);
         end
 
         function tWriteToTerminalRepeatedMessagePrintsDot(testCase)
-            % Two consecutive identical messages produce a "." for the
-            % second when ShowRepeatedAsDots is true (the default).
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addStatus("Info", Message="same");
-            testCase.Stack.addStatus("Info", Message="same");
-            diary off
-
-            lines = strjoin(readlines(diaryFile), newline);
-            testCase.verifyTrue(contains(lines, "same"));
-            testCase.verifyTrue(contains(lines, "."));
+            output = evalc('testCase.Stack.addStatus("Info", Message="same"); testCase.Stack.addStatus("Info", Message="same");');
+            testCase.verifyEqual(string(output), "same" + newline + ".");
         end
 
         function tInfoMessageWithPercentSignWritesLiterally(testCase)
-            % `%` in a message must NOT be interpreted as a printf format
-            % spec. Pre-fix this would consume an arg / produce garbage.
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addStatus("Info", Message="100% done, %s %d");
-            diary off
-
-            lines = strjoin(readlines(diaryFile), newline);
-            testCase.verifyTrue(contains(lines, "100% done, %s %d"))
+            output = evalc('testCase.Stack.addStatus("Info", Message="100% done, %s %d");');
+            testCase.verifyEqual(string(output), "100% done, %s %d" + newline);
         end
 
         function tErrorMessageWithPercentSignWritesLiterally(testCase)
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addStatus("Error", Message="boom 50% %d");
-            diary off
-
-            lines = strjoin(readlines(diaryFile), newline);
-            testCase.verifyTrue(contains(lines, "Error: boom 50% %d"))
+            output = evalc('testCase.Stack.addStatus("Error", Message="boom 50% %d");');
+            testCase.verifyEqual(string(output), "Error: boom 50% %d" + newline);
         end
 
         function tWarningMessageWithPercentSignFiresWithoutError(testCase)
-            % `warning(id, msg)` treats msg as a format string; a `%`
-            % in user content used to error or produce garbage.
-            fcn = @() testCase.Stack.addStatus("Warning", ...
-                Message="50% off %s", Identifier="a:b");
-            testCase.verifyWarning(fcn, "a:b")
+            output = evalc('testCase.verifyWarningFree(@() testCase.Stack.addStatus("Warning", Message="50% off %s", Identifier="a:b"));');
+            testCase.verifyEqual(string(output), "Warning: 50% off %s" + newline);
         end
 
         function tShowRepeatedAsDotsDisabledPrintsFullMessage(testCase)
-            % With ShowRepeatedAsDots=false, a repeated message is printed
-            % in full instead of being collapsed to a dot.
             testCase.CommandWindowView.ShowRepeatedAsDots = false;
-            diaryFile = testCase.diaryFixture();
-
-            testCase.Stack.addStatus("Info", Message="same");
-            testCase.Stack.addStatus("Info", Message="same");
-            diary off
-
-            lines = readlines(diaryFile);
-            % Expect "same" on at least two separate lines.
-            sameLines = sum(contains(lines, "same"));
-            testCase.verifyGreaterThanOrEqual(sameLines, 2)
+            output = evalc('testCase.Stack.addStatus("Info", Message="same"); testCase.Stack.addStatus("Info", Message="same");');
+            testCase.verifyEqual(string(output), "same" + newline + "same" + newline);
         end
 
     end
 
-    methods (Access = protected)
-
-        function diaryFile = diaryFixture(testCase)
-            % Use diary to capture the output to the command window
-            testCase.addTeardown(@() diary(get(0,'Diary')));
-
-            wff = matlab.unittest.fixtures.WorkingFolderFixture;
-            testCase.applyFixture(wff);
-            diaryFile = fullfile(wff.Folder, "diary.txt");
-            testCase.addTeardown(@() delete(diaryFile));
-
-            testCase.addTeardown(@() diary("off")); % Ensure the diary is closed before trying to delete the file
-            diary(diaryFile);
-        end
-
-    end
 
 end
 

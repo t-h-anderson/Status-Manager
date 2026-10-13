@@ -19,22 +19,20 @@ classdef WarningCapture < handle
         SavedState
         InitialMessage
         InitialId
+        SavedMessage
+        SavedId
     end
 
     methods
         function obj = WarningCapture()
             obj.SavedState = warning();
+            [obj.SavedMessage, obj.SavedId] = lastwarn;
             warning("off");
-            % Seed lastwarn with a UUID sentinel so we can distinguish
-            % "no warning issued" from "the warning that happened to be
-            % in lastwarn before we started". We then capture the
-            % current lastwarn AS THE BASELINE — whether or not the
-            % sentinel actually made it into lastwarn (warning('off')
-            % can suppress lastwarn updates in some configurations) —
-            % and compare against it later. This is robust to either
-            % behaviour.
+            % Seed lastwarn directly without emitting a warning. Restore
+            % the caller's value on deletion so nested captures do not
+            % report the same native warning twice.
             sentinel = statusMgr.util.uuid();
-            warning(sentinel, sentinel);
+            lastwarn(sentinel, "statusMgr:WarningCapture:sentinel");
             [obj.InitialMessage, obj.InitialId] = lastwarn;
         end
 
@@ -58,6 +56,7 @@ classdef WarningCapture < handle
 
         function delete(obj)
             warning(obj.SavedState);
+            lastwarn(obj.SavedMessage, obj.SavedId);
         end
     end
 end

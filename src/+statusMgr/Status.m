@@ -154,15 +154,32 @@ classdef Status < matlab.mixin.SetGet
             if ~isempty(toComplete)
                 [toComplete.IsComplete] = deal(true);
 
-                % Call any completion functions
+                % Finish every callback and notify observers even if one
+                % callback fails. Otherwise completed statuses strand UI
+                % resources on the stack and cannot be completed again.
+                failure = MException.empty(0,1);
                 for i = 1:numel(toComplete)
                     this = toComplete(i);
-                    if ~isempty(this.CompletionFcn)
-                        this.CompletionFcn(this);
+                    try
+                        if isvalid(this) && ~isempty(this.CompletionFcn)
+                            this.CompletionFcn(this);
+                        end
+                    catch cause
+                        if isempty(failure)
+                            failure = cause;
+                        else
+                            failure = addCause(failure, cause);
+                        end
                     end
                 end
 
-                notify(toComplete, "Completed");
+                remaining = toComplete(isvalid(toComplete));
+                if ~isempty(remaining)
+                    notify(remaining, "Completed");
+                end
+                if ~isempty(failure)
+                    rethrow(failure);
+                end
             end
         end
 
