@@ -79,7 +79,15 @@ stack.removeStatus(status);
 result = stack.run(@myFunction);                    % Running → clears on success, Error on failure
 result = stack.run(@myFunction, Args={a, b});       % pass function arguments via Args
 result = stack.run(@myFunction, CatchErrors=false); % rethrow instead of capturing
+
+% Name the progress status and announce success
+stack.run(@saveProject, Args={project}, ...
+    Message="Saving project…", SuccessMessage="Project saved");
 ```
+
+Function arguments are only accepted through `Args={...}`. Positional arguments
+are rejected, so a forwarded string such as `"Message"` can never be mistaken
+for a `run` option. See [Running work](#running-work) for the full contract.
 
 **5. Cooperative cancellation**
 
@@ -129,6 +137,14 @@ future = parfeval(backgroundPool, @longJob, 1, x);
 stack.monitorFuture(future, Message="Long job");
 ```
 
+**7. UI callbacks**
+
+```matlab
+% Report anything a callback throws or warns through the stack's views,
+% instead of losing it to the command window.
+button.ButtonPushedFcn = @(~, ~) stack.invoke(@() app.loadFile());
+```
+
 ### Available status types
 
 | Type | Popup view behaviour |
@@ -161,6 +177,116 @@ The enum also defines `RequestingInput`, `AwaitingInput`, and `ValueSupplied`. T
 - **Background work** — `stack.runInBackground(@fcn, Args={a, b})` launches a `parfeval` future, pushes a `RunningCancellable` status, streams progress through a `DataQueue`, and converts failures into Error statuses. Cancel-aware views cancel the future. Or use `stack.monitorFuture(future)` for a future you already have. `runInBackground` and synchronous `stack.run(@fcn, Args={a, b})` both take worker/function arguments as a cell via `Args={...}`.
 - **Per-view filters** — every view supports `IncludeIdentifiers` / `ExcludeIdentifiers` glob lists that complement the stack-level `suppressIdentifier`. Have a CommandWindow show only `myapp:debug:*` while a FileLog records everything.
 - **Structured / rotating logs** — `FileLog` accepts `Format="json-lines"` for one-JSON-object-per-line output, and `MaxBytes` triggers rotation (`Log.txt` → `Log_1.txt`) when the file would otherwise grow without bound.
+- **Named groups** — `statusMgr.util.StatusManager` keeps a registry of named stacks with their views, so separate parts of an app can share a stack without passing it around. See [Named groups](#named-groups-statusmanager).
+- **Scoped diagnostics** — library code can report warnings and errors to whichever stack the current workflow is using, without a reference to it. See [Routing diagnostics](#routing-diagnostics).
+
+## Running work
+
+`stack.run(@fcn)` and `stack.runCancellable(@(status) fcn(status))` wrap a call in a progress status and turn its outcome into statuses.
+
+| Option | Default | Effect |
+|---|---|---|
+| `Args` | `{}` | Cell of arguments forwarded to the function. The only way to pass arguments. |
+| `Message`, `Identifier` | `"Running: <function>"`, `""` | Text and identifier of the progress status. |
+| `SuccessMessage`, `SuccessIdentifier` | `""` | When set, a Success status is published if the call succeeds. |
+| `SuccessIsTemporary` | `true` | Whether that Success status is replaced by the next status pushed. |
+| `CatchErrors` | `true` | Publish an error as an Error status. `false` rethrows it instead. |
+| `CatchWarnings` | `true` | Publish the last MATLAB warning issued during the call as a Warning status. |
+
+The order of events is fixed: the progress status is removed first, then the captured warning is published, then the Error or Success status. A view therefore never shows the outcome underneath a stale progress dialog.
+
+If the progress status's completion callback throws, the run counts as failed: no Success is published, and the failure follows `CatchErrors`. If the function also failed, its error is the one reported, with the completion failure attached as a cause.
+
+While the function runs, the stack is the active [diagnostics route](#routing-diagnostics). If the function deletes the stack (for example by closing its app), the outcome is reported to the enclosing route, or to the Default group if there is none.
+
+`stack.invoke(@action)` is the equivalent for UI callbacks. It routes diagnostics to the stack, publishes the last native warning, and publishes an uncaught exception as an Error status instead of rethrowing it. Nothing is published when the callback succeeds without warnings.
+
+## Named groups (StatusManager)
+
+`statusMgr.util.StatusManager` is a registry of named groups. Each group is a stack plus the views attached to it:
+
+```matlab
+import statusMgr.util.StatusManager
+stack = StatusManager.make("Editor", PopupParent=fig, EnableCommandWindow=true);
+stack = StatusManager.get("Editor");               % the same stack, from anywhere
+StatusManager.addFileLog("Editor", LogFolder=logDir);
+StatusManager.addView("Editor", app.StatusBar);    % a view you created yourself
+```
+
+**Ownership.** A group owns the views it creates (`make`, `addPopup`, `addCommandWindow`, `addFileLog`) and any view added with `addViewScoped(..., Delete=true)`. Views you pass to `addView` or `addViewScoped` stay yours.
+
+| Operation | Owned views | Your views | Stack |
+|---|---|---|---|
+| `removeView(name, idx)` | Deleted | Disconnected, still usable | Kept |
+| `removeViews(name, ..., Delete=false)` | Disconnected | Disconnected | Kept |
+| `removeViews(name, ..., Delete=true)` | Deleted | Deleted | Kept |
+| `clear(name)` / `clear()` | Disconnected now; deleted once the group is released | Disconnected | Kept |
+| `shutdown()` | Deleted | Disconnected | Deleted |
+
+A disconnected view stops listening and closes any dialog, progress bar or timer it was showing. Call `view.setStack(otherStack)` to reuse it. `clear` never deletes a stack, so a handle returned by `make` stays valid. `shutdown` is the only operation that destroys stacks. It acts on the groups registered at the time; groups removed earlier by `clear` are already inactive, and whoever still holds them controls their lifetime.
+
+**Tests.** The hidden `snapshot()` and `restore(token)` methods isolate the registry between tests:
+
+```matlab
+token = statusMgr.util.StatusManager.snapshot();
+testCase.addTeardown(@() statusMgr.util.StatusManager.restore(token));
+```
+
+`restore` reconnects the snapshotted groups' views to their original stacks without replaying log entries. Groups created since the snapshot are dropped and their views disconnected.
+
+## Routing diagnostics
+
+Library code that has no stack handle can still report through the status views:
+
+```matlab
+statusMgr.util.StatusManager.warning("mylib:io:retry", "Retrying %s", file);
+statusMgr.util.StatusManager.reportError(exception);  % caller still decides whether to rethrow
+```
+
+These go to the innermost active route:
+
+```matlab
+route = statusMgr.util.StatusManager.withStack(stack);  % active while `route` exists
+```
+
+Routes nest, and leaving a scope restores the caller's route, even when an error unwinds it. `run`, `runCancellable` and `invoke` set a route for the duration of the call. With no active route, diagnostics go to the Default group. If that group does not exist yet, they create it with a command-window view; call `make("Default", ...)` early to configure it differently. The message is only passed through `sprintf` when format arguments are supplied, so a literal `%` or a Windows path is printed unchanged.
+
+## Writing a custom view
+
+Subclass `statusMgr.internal.view.StatusViewBase` and implement `isVisible`, `displayInfo`, `displayRunning(status, cancellable)`, `displayError`, `displayWarning`, `displaySuccess`, `displayIdle` and `handleInputRequest`. If the view treats every type the same (a log, say), subclass `statusMgr.internal.view.StatusSinkViewBase` and implement `displayStatus(status, cancellable)` instead.
+
+Choose a display model by setting `RefreshOnRemoval` in the constructor, before calling `setStack`:
+
+- **Display views** (`true`, the default; `Popup`, `StatusBar`, `InputField`) show the status on top of the stack and redraw when a status is removed. Updates to statuses below the top are ignored. The exception is when a filtered status sits on top: the view keeps showing, and updating, the status underneath it.
+- **Log views** (`false`; `CommandWindow`, `FileLog`, `RecordingView`) record each status as it is added or updated, including updates below the top, and ignore removals so nothing is logged twice.
+
+The base class runs every display through the `Show*` flags and the identifier filters before anything on screen is replaced, so a filtered status never tears down the current display. Optional protected hooks:
+
+| Hook | Called when |
+|---|---|
+| `beforeDisplay()` | A new status is about to replace the current display. |
+| `cleanupCompletedStatus()` | On every event, even while the view is hidden. Release resources belonging to completed statuses. |
+| `clearDisplay()` | The view is disconnected or rebound. Release all active displays; do not delete the view. |
+| `displayBackgroundUpdate(status)` | Log views: a status below the top was updated. Avoid side effects tied to the current status. |
+| `updateDisplayedStatus(status)` | Display views: the status currently on screen was updated while a filtered status sits on top. |
+
+`setStack([])` must disconnect the view without deleting it. When a view is bound to a stack, display views show its current status; log views do not replay history.
+
+Views listen to the stack's `StatusUpdated` event. Its `statusMgr.monitorable.StatusEventData` carries the `Status` and a `Change`:
+
+| `Change` | Raised by | `Status` |
+|---|---|---|
+| `"Added"` | `addStatus`, `add` | The new status |
+| `"Updated"` | `updateStatus`, background progress | The updated status, which may be below the top |
+| `"Refresh"` | `removeStatus` and completion | The new top of the stack |
+
+## Behaviour notes
+
+- **Completion callbacks.** `status.complete()` runs every `CompletionFcn` and raises `Completed` even if one throws. Afterwards it rethrows the first failure, with any others attached as causes. `removeStatus` across several stacks finishes cleaning up every stack before it rethrows.
+- **Background progress.** Progress sent on a `ProgressQueue` updates the status and notifies views whether or not the status is on top. When the future finishes, the monitor waits up to 2 seconds for queued progress to be delivered before completing the status, so the final update is not lost. A queue shared with other producers cannot hold a status open indefinitely.
+- **Pending input on disconnect.** If an `InputField` or `Popup` that is collecting input for `requestInput` is disconnected (by `clear`, `removeView` or `shutdown`), the request is answered with its `DefaultValue` instead of waiting for the timeout.
+- **Hidden figures.** Completed progress dialogs are cleaned up even while the parent figure is hidden.
+- **Command window output.** `CommandWindow` prints warnings to standard error without raising a MATLAB warning of its own. Identical consecutive messages collapse to dots (`ShowRepeatedAsDots`, on by default), except warnings and errors, which are always printed in full.
 
 ## Examples
 
@@ -175,39 +301,3 @@ The license is available in the [license.txt](license.txt) file in this GitHub r
 [MATLAB Central](https://www.mathworks.com/matlabcentral)
 
 Copyright 2025 The MathWorks, Inc.
-
-### Scoped diagnostics and lifecycle
-
-`stack.run` and `stack.runCancellable` accept `Message`, `Identifier`, and an
-optional `SuccessMessage`/`SuccessIdentifier` (`SuccessIsTemporary=true` by default).
-They complete progress before publishing the outcome. Forward function arguments
-with `Args={...}`; positional function arguments are not supported. This keeps
-strings such as `"Message"` unambiguous when forwarded to the work function.
-
-Use `stack.invoke(@callback)` for UI callbacks: it reports uncaught exceptions
-and the last native MATLAB warning through the stack's views. Direct library
-code can call `statusMgr.util.StatusManager.warning(id, message, ...)` or
-`reportError(exception)`. Keep `route = statusMgr.util.StatusManager.withStack(stack)`
-alive for a synchronous scope; nested routes restore the previous stack. Outside
-a route, diagnostics use the Default group. Configure its views before first use.
-`StatusManager.clear(name)` and `clear()` disconnect group views and stop their
-active displays immediately, while preserving caller-held stacks. Snapshots
-keep inactive view handles so `snapshot()`/`restore()` can reconnect them without
-replaying log entries. Owned views are deleted when their group is released;
-borrowed views stay valid and can be rebound with `setStack`.
-`StatusManager.shutdown()` destroys currently registered groups and stacks without
-creating a replacement. It deletes only owned views and disconnects borrowed views.
-Groups previously removed with `clear` are already inactive; their remaining owners
-control their lifetime. `removeViews(..., Delete=false)` detaches matching views
-without deleting them. Custom views must accept an empty stack in `setStack` and
-release their listeners and active displays without deleting the view itself.
-
-`StatusUpdated` carries `StatusEventData.Change`: `Added`, `Updated`, or `Refresh`.
-Log views record additions and explicit updates (including updates below the top
-of the stack), while display refreshes do not create duplicate log entries.
-Command-window warnings are printed without issuing a second MATLAB warning;
-repeated warnings and errors are always printed in full. Hidden/filtered statuses
-preserve the current popup or progress display, and completion cleans up its
-resources even when the parent figure is hidden. A failed completion callback
-does not suppress other callbacks or completion notifications; its exception is
-rethrown after cleanup, with further callback failures retained as causes.

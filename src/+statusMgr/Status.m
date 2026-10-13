@@ -148,6 +148,11 @@ classdef Status < matlab.mixin.SetGet
         end
 
         function complete(objs)
+            % Mark statuses complete, run their CompletionFcn and raise
+            % Completed (stacks remove them in response). Statuses that
+            % are already complete are skipped. Every callback runs and
+            % Completed is raised even if a callback throws; the first
+            % failure is then rethrown with any others as causes.
             idx = ~[objs.IsComplete];
             toComplete = (objs(idx));
 

@@ -5,6 +5,11 @@ classdef StatusManagerGroup < handle
     %
     % All views in the group are connected to the same Stack. Adding a view
     % (including an existing one) re-connects it to this group's Stack.
+    %
+    % Ownership: views added with Owned=true (as StatusManager does for
+    % views it creates) are deleted when removed or when the group is
+    % deleted. Other views are only disconnected (setStack([])) and can be
+    % reused. Deleting the group never deletes its Stack.
 
     properties (SetAccess = protected)
         Stack
@@ -30,7 +35,10 @@ classdef StatusManagerGroup < handle
 
 
         function disconnectViews(obj)
-            % Keep handles for snapshot restoration, but stop active resources.
+            %DISCONNECTVIEWS Detach views still bound to this group's Stack.
+            % Keeps the handles so reconnectViews (used by restore) can
+            % rebind them, but stops their listeners and active displays.
+            % Views since rebound to another stack are left alone.
             for view = obj.Views
                 if isvalid(view) && isequal(view.Stack, obj.Stack)
                     view.setStack(statusMgr.Stack.empty(1,0));
@@ -39,6 +47,7 @@ classdef StatusManagerGroup < handle
         end
 
         function reconnectViews(obj)
+            %RECONNECTVIEWS Rebind disconnected views to this group's Stack.
             for view = obj.Views
                 if isvalid(view) && isempty(view.Stack)
                     view.setStack(obj.Stack);

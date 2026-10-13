@@ -33,6 +33,25 @@ classdef StatusManager < handle
     % Scoped registration (auto-removal via onCleanup):
     %   cleanup = statusMgr.util.StatusManager.addViewScoped("MyGroup", view);
     %   % ... when `cleanup` is cleared, the view is removed from the group.
+    %
+    % Ownership: a group owns the views it creates (make, addPopup,
+    % addCommandWindow, addFileLog) and views added with
+    % addViewScoped(..., Delete=true). Views passed to addView or
+    % addViewScoped stay the caller's. Removing or clearing disconnects
+    % views; only owned views are ever deleted. clear() never deletes a
+    % Stack; shutdown() deletes the registered groups' stacks.
+    %
+    % Routing diagnostics from code without a stack handle:
+    %   route = statusMgr.util.StatusManager.withStack(stack);
+    %   statusMgr.util.StatusManager.warning("lib:id", "Retrying %s", f)
+    %   statusMgr.util.StatusManager.reportError(exception)
+    %   stack = statusMgr.util.StatusManager.currentStack()
+    % Stack.run, runCancellable and invoke set the route for their call.
+    %
+    % Teardown and test isolation:
+    %   statusMgr.util.StatusManager.shutdown()
+    %   token = statusMgr.util.StatusManager.snapshot();   % hidden
+    %   statusMgr.util.StatusManager.restore(token)        % hidden
 
     properties (Access = private)
         Routes (1,:) cell = {}
@@ -136,6 +155,10 @@ classdef StatusManager < handle
 
         function restore(token)
             %RESTORE Restore the singleton to a previously snapshotted state.
+            %
+            % The snapshotted groups' views are reconnected to their
+            % stacks without replaying log entries. Groups created since
+            % the snapshot are dropped and their views disconnected.
             current = statusMgr.util.StatusManager.instance("peek");
             retained = statusMgr.util.StatusManagerGroup.empty(1,0);
             if token.hasInstance && isvalid(token.instance)
@@ -163,7 +186,10 @@ classdef StatusManager < handle
     methods (Static)
 
         function cleanup = withStack(stack)
-            % Route synchronous library diagnostics to this workflow's stack.
+            %WITHSTACK Route synchronous library diagnostics to a stack.
+            %
+            %   route = statusMgr.util.StatusManager.withStack(stack);
+            %
             % Keep cleanup alive for the scope; nested scopes restore their
             % caller's route, including when an exception unwinds the scope.
             arguments
@@ -177,7 +203,11 @@ classdef StatusManager < handle
         end
 
         function stack = currentStack()
-            % Resolve the innermost live route, otherwise the Default group.
+            %CURRENTSTACK The stack diagnostics are routed to.
+            %
+            % The innermost route whose stack is still valid, otherwise
+            % the Default group's stack. A missing Default group is
+            % created with a CommandWindow view.
             obj = statusMgr.util.StatusManager.instance();
             for k = numel(obj.Routes):-1:1
                 if isvalid(obj.Routes{k})
@@ -189,8 +219,13 @@ classdef StatusManager < handle
         end
 
         function warning(identifier, message, varargin)
-            % Log a warning. Format only when arguments are supplied, so a
-            % literal path or percent sign in a message remains unchanged.
+            %WARNING Publish a Warning status on the current route.
+            %
+            %   statusMgr.util.StatusManager.warning("lib:id", "Retrying %s", file)
+            %
+            % Format only when arguments are supplied, so a literal path
+            % or percent sign in a message remains unchanged. No MATLAB
+            % warning is issued.
             if ~isempty(varargin)
                 message = sprintf(message, varargin{:});
             end
@@ -200,13 +235,21 @@ classdef StatusManager < handle
         end
 
         function reportError(cause)
-            % Report a handled failure; callers retain exception semantics.
+            %REPORTERROR Publish an Error status for an exception on the current route.
+            %
+            % Reporting does not rethrow; the caller still decides whether
+            % to propagate the exception.
             stack = statusMgr.util.StatusManager.currentStack();
             stack.addError(cause);
         end
 
         function shutdown()
-            % Release owned resources without constructing a replacement.
+            %SHUTDOWN Dispose of every registered group without creating a replacement.
+            %
+            % Deletes owned views, disconnects the caller's views, and
+            % deletes the groups' stacks. Groups already removed by clear()
+            % are unaffected; whoever still holds them controls their
+            % lifetime. Safe to call more than once.
             obj = statusMgr.util.StatusManager.instance("peek");
             statusMgr.util.StatusManager.instance([]);
             if isempty(obj) || ~isvalid(obj)
@@ -303,13 +346,13 @@ classdef StatusManager < handle
             %CLEAR Remove a group by name, or all groups if no name is given.
             %
             % The group's Stack is left untouched — callers may still hold
-            % the handle returned by make(). All views are disconnected and
-            % release their active displays immediately. Snapshots keep
-            % inactive view handles for restore(), which reconnects them.
-            % Owned views are deleted when their group is released;
-            % borrowed views remain reusable. shutdown() destroys currently
-            % registered groups/stacks; previously cleared groups are already
-            % inactive and can be released by their remaining owners.
+            % the handle returned by make(). All views are disconnected
+            % immediately, closing any dialogs, progress bars or timers.
+            % Owned views are deleted once the group is released, i.e. when
+            % nothing else (a snapshot token, an addViewScoped cleanup, a
+            % retained group handle) still refers to it; the caller's views
+            % stay reusable. restore() reconnects a snapshotted group's
+            % views. Use shutdown() to delete stacks too.
             arguments
                 name (1,1) string = string(nan)
             end
@@ -360,7 +403,9 @@ classdef StatusManager < handle
         function addView(name, view)
             %ADDVIEW Add an existing view object to a named group.
             %
-            % The view's Stack is updated to match the group's Stack.
+            % The view's Stack is updated to match the group's Stack. The
+            % view stays the caller's: the group disconnects it on removal
+            % but never deletes it.
             arguments
                 name (1,1) string
                 view (1,1) statusMgr.internal.view.StatusViewInterface
@@ -371,6 +416,9 @@ classdef StatusManager < handle
 
         function removeView(name, idx)
             %REMOVEVIEW Remove the view at position idx from a named group.
+            %
+            % A view the group created is deleted; a view added with
+            % addView is disconnected and can be reused.
             arguments
                 name (1,1) string
                 idx  (1,1) double {mustBeInteger, mustBePositive}
@@ -411,6 +459,8 @@ classdef StatusManager < handle
             %REMOVEVIEWS Remove views matching Class/Instance from a group.
             %   removeViews("MyGroup", Class="statusMgr.view.Popup", Delete=true)
             %   removeViews("MyGroup", Instance=viewObj)
+            % Removed views are disconnected and returned. Delete=true also
+            % deletes them, whoever owns them.
             arguments
                 name (1,1) string = "Default"
                 nvp.Class (1,1) string = ""
@@ -427,6 +477,8 @@ classdef StatusManager < handle
             %ADDVIEWSCOPED Add a view to a group; return a removal onCleanup.
             %   cleanup = addViewScoped("MyGroup", view);
             %   cleanup = addViewScoped("MyGroup", view, Delete=true);
+            % Delete=true hands the view to the group, which deletes it on
+            % scope exit or when the group is released.
             arguments
                 name (1,1) string
                 view (1,1) statusMgr.internal.view.StatusViewInterface

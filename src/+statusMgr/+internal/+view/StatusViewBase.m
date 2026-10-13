@@ -5,9 +5,30 @@ classdef (Abstract) StatusViewBase < ...
     %
     % Provides the Stack/StackListener storage, the standardDisplay
     % dispatch loop, and the Show*/identifier gate (shouldDisplayStatus)
-    % applied before any display is replaced. Concrete views (Popup, CommandWindow,
-    % FileLog) implement the abstract display methods declared at the
-    % bottom of this file.
+    % applied before any display is replaced. Concrete views (Popup,
+    % CommandWindow, FileLog, ...) implement the abstract display methods
+    % declared at the bottom of this file.
+    %
+    % Display model (set RefreshOnRemoval before calling setStack):
+    %   true  - display views show the top of the stack and redraw when a
+    %           status is removed. Updates beneath the top are ignored,
+    %           unless a filtered status on top hides the one on screen.
+    %   false - log views record every Added/Updated event, including
+    %           updates beneath the top, and ignore Refresh events.
+    %
+    % Optional protected hooks:
+    %   beforeDisplay           - a new status is about to replace the display
+    %   cleanupCompletedStatus  - every event, even while hidden; release
+    %                             resources of completed statuses
+    %   clearDisplay            - disconnected or rebound; release all active
+    %                             displays without deleting the view
+    %   displayBackgroundUpdate - log views: a status beneath the top changed
+    %   updateDisplayedStatus   - display views: the status on screen changed
+    %                             while a filtered status is on top
+    %
+    % setStack([]) disconnects the view without deleting it. Binding to a
+    % stack shows its current status (display views) without replaying
+    % history (log views).
 
     properties (SetAccess = protected)
         Stack = statusMgr.Stack.empty(1,0)
@@ -15,11 +36,12 @@ classdef (Abstract) StatusViewBase < ...
     end
 
     properties (SetAccess = protected)
+        % true for display views, false for log views (see class help).
+        RefreshOnRemoval (1,1) logical = true
         % Empty (not a default-constructed Status) so the class doesn't
         % hold a shared Status instance alive for the whole session, which
         % warns at teardown once the path is gone. standardDisplay assigns
         % the real status before any display method reads it.
-        RefreshOnRemoval (1,1) logical = true
         IncomingStatus (1,:) statusMgr.Status {mustBeScalarOrEmpty} = statusMgr.Status.empty(1,0)
         PreviousStatus (1,:) statusMgr.Status {mustBeScalarOrEmpty} = statusMgr.Status.empty(1,0)
     end
