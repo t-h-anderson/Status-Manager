@@ -281,6 +281,14 @@ classdef StatusManager < handle
 
         function clear(name)
             %CLEAR Remove a group by name, or all groups if no name is given.
+            %
+            % The group's Stack is left untouched — callers may still hold
+            % the handle returned by make(). Views the group owns are
+            % deleted when the group is released, i.e. once nothing else
+            % (a snapshot token, an addViewScoped cleanup, a retained
+            % group handle) still refers to it. This is what lets
+            % snapshot()/restore() bring a cleared registry back intact.
+            % Use shutdown() to dispose of everything immediately.
             arguments
                 name (1,1) string = string(nan)
             end

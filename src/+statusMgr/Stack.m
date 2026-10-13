@@ -482,7 +482,7 @@ classdef Stack < statusMgr.internal.StackInterface
             obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription, nvp.ProgressQueue);
         end
 
-        function varargout = run(obj, fcnHandle, varargin, nvp)
+        function varargout = run(obj, fcnHandle, nvp)
             % Run a function while pushing a Running status onto the
             % stack. By default, errors are caught and pushed as Error
             % statuses, and any warning issued during the call is
@@ -495,21 +495,11 @@ classdef Stack < statusMgr.internal.StackInterface
             %
             % Args is a cell of positional arguments forwarded to
             % fcnHandle (matching runInBackground's spelling). For a
-            % zero-arg call, omit Args.
-            %
-            %   stack.run(@myFcn, arg1, arg2)
-            %
-            % Positional arguments are also accepted, but a string that
-            % matches an option name (e.g. "Message") is parsed as that
-            % option. Use Args={...} when forwarding arbitrary strings.
+            % zero-arg call, omit Args. Function arguments are only taken
+            % via Args, so they can never be mistaken for runner options.
             arguments
                 obj (1,1) statusMgr.Stack
                 fcnHandle (1,1) function_handle
-            end
-            arguments (Repeating)
-                varargin
-            end
-            arguments
                 nvp.Args (1,:) cell = {}
                 nvp.CatchErrors (1,1) logical = true
                 nvp.CatchWarnings (1,1) logical = true
@@ -520,13 +510,12 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.SuccessIsTemporary (1,1) logical = true
             end
 
-            nvp.Args = statusMgr.Stack.mergePositionalArgs(varargin, nvp.Args);
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("Running", false, ...
                 fcnHandle, nvp.Args, nvp);
         end
 
-        function varargout = runCancellable(obj, fcnHandle, varargin, nvp)
+        function varargout = runCancellable(obj, fcnHandle, nvp)
             % Like run(), but pushes a RunningCancellable status and
             % passes that Status as the FIRST argument to fcnHandle.
             % Cancel-aware views (e.g. Popup) call status.complete()
@@ -554,11 +543,6 @@ classdef Stack < statusMgr.internal.StackInterface
             arguments
                 obj (1,1) statusMgr.Stack
                 fcnHandle (1,1) function_handle
-            end
-            arguments (Repeating)
-                varargin
-            end
-            arguments
                 nvp.Args (1,:) cell = {}
                 nvp.CatchErrors (1,1) logical = true
                 nvp.CatchWarnings (1,1) logical = true
@@ -569,7 +553,6 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.SuccessIsTemporary (1,1) logical = true
             end
 
-            nvp.Args = statusMgr.Stack.mergePositionalArgs(varargin, nvp.Args);
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("RunningCancellable", true, ...
                 fcnHandle, nvp.Args, nvp);
@@ -628,11 +611,17 @@ classdef Stack < statusMgr.internal.StackInterface
             % Remove it explicitly, after warnings are restored, so a
             % failing CompletionFcn reaches the caller instead of being
             % swallowed by an onCleanup destructor.
-            completionFailure = MException.empty(0,1);
+            % A completion failure is a failure of the run: it suppresses
+            % Success and follows CatchErrors. If the work failed too,
+            % keep both, with the work's error as the primary one.
             try
                 statusMgr.Stack.removeUnlessComplete(obj, status);
             catch cause
-                completionFailure = cause;
+                if isempty(failure)
+                    failure = cause;
+                else
+                    failure = addCause(failure, cause);
+                end
             end
 
             if ~isvalid(obj)
@@ -643,9 +632,6 @@ classdef Stack < statusMgr.internal.StackInterface
             end
             if ~isempty(failure)
                 if ~options.CatchErrors
-                    if ~isempty(completionFailure)
-                        failure = addCause(failure, completionFailure);
-                    end
                     rethrow(failure);
                 end
                 obj.addError(failure);
@@ -653,9 +639,6 @@ classdef Stack < statusMgr.internal.StackInterface
                 obj.addStatus("Success", Identifier=options.SuccessIdentifier, ...
                     Message=options.SuccessMessage, MessageShort=options.SuccessMessage, ...
                     IsTemporary=options.SuccessIsTemporary);
-            end
-            if ~isempty(completionFailure)
-                rethrow(completionFailure);
             end
         end
 
@@ -1117,19 +1100,6 @@ classdef Stack < statusMgr.internal.StackInterface
         function label = functionLabel(fcnHandle)
             label = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
                 "Boundaries", "inclusive");
-        end
-
-        function args = mergePositionalArgs(positional, args)
-            % Shared by run() and runCancellable(): positional arguments
-            % and Args= are alternative spellings, not combinable.
-            if isempty(positional)
-                return
-            end
-            if ~isempty(args)
-                error("statusMgr:Stack:ambiguousArguments", ...
-                    "Supply positional arguments or Args, not both.");
-            end
-            args = positional;
         end
 
         function removeUnlessComplete(stack, status)

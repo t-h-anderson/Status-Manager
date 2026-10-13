@@ -4,8 +4,8 @@ classdef (Abstract) StatusViewBase < ...
     %STATUSVIEWBASE Shared implementation for concrete status views.
     %
     % Provides the Stack/StackListener storage, the standardDisplay
-    % dispatch loop, and the per-StatusType dispatcher methods that
-    % gate on the Show* flags. Concrete views (Popup, CommandWindow,
+    % dispatch loop, and the Show*/identifier gate (shouldDisplayStatus)
+    % applied before any display is replaced. Concrete views (Popup, CommandWindow,
     % FileLog) implement the abstract display methods declared at the
     % bottom of this file.
 
@@ -140,23 +140,25 @@ classdef (Abstract) StatusViewBase < ...
         end
 
         function dispatchDisplay(obj, status)
+            % Callers gate on shouldDisplayStatus (which applies the Show*
+            % flags) before reaching here.
             switch status.Type
                 case statusMgr.StatusType.Info
-                    obj.displayInfo_(status);
+                    obj.displayInfo(status);
                 case statusMgr.StatusType.Running
-                    obj.displayRunning_(status, false);
+                    obj.displayRunning(status, false);
                 case statusMgr.StatusType.RunningCancellable
-                    obj.displayRunning_(status, true);
+                    obj.displayRunning(status, true);
                 case statusMgr.StatusType.Error
-                    obj.displayError_(status);
+                    obj.displayError(status);
                 case statusMgr.StatusType.Warning
-                    obj.displayWarning_(status);
+                    obj.displayWarning(status);
                 case statusMgr.StatusType.Success
-                    obj.displaySuccess_(status);
+                    obj.displaySuccess(status);
                 case statusMgr.StatusType.Idle
-                    obj.displayIdle_(status);
+                    obj.displayIdle(status);
                 case statusMgr.StatusType.RequestingInput
-                    obj.handleInputRequest_(status);
+                    obj.handleInputRequest(status);
                 case {statusMgr.StatusType.AwaitingInput, statusMgr.StatusType.ValueSupplied}
                     % Intermediate input states — no display action needed.
                 otherwise
@@ -221,50 +223,8 @@ classdef (Abstract) StatusViewBase < ...
             tf = true;
         end
 
-        function displayInfo_(obj, status)
-            if obj.ShowInfo
-                obj.displayInfo(status);
-            end
-        end
-
-        function displayRunning_(obj, status, cancellable)
-            if obj.ShowRunning
-                obj.displayRunning(status, cancellable);
-            end
-        end
-
-        function displayError_(obj, status)
-            if obj.ShowErrors
-                obj.displayError(status);
-            end
-        end
-
-        function displayWarning_(obj, status)
-            if obj.ShowWarnings
-                obj.displayWarning(status);
-            end
-        end
-
-        function displaySuccess_(obj, status)
-            if obj.ShowSuccess
-                obj.displaySuccess(status);
-            end
-        end
-
-        function displayIdle_(obj, status)
-            if obj.ShowIdle
-                obj.displayIdle(status);
-            end
-        end
-
         function beforeDisplay(obj) %#ok<MANU>
             % Overload to do something before each display trigger
-        end
-
-        function handleInputRequest_(obj, status)
-            if obj.HandleInputRequests
-                obj.handleInputRequest(status);
-            end
         end
 
     end

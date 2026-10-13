@@ -20,9 +20,11 @@ classdef StatusManagerGroup < handle
 
     methods
         function delete(obj)
+            % Release owned views only. The Stack is left untouched:
+            % callers may still hold the handle returned by make(). Use
+            % StatusManager.shutdown() to destroy stacks explicitly.
             owned = obj.Views(obj.IsOwned);
             delete(owned(isvalid(owned)));
-            delete(obj.Stack);
         end
 
 

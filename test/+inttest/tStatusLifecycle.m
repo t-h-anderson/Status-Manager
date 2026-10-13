@@ -300,8 +300,9 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             stack = statusMgr.util.StatusManager.make("lifecycle", EnableCommandWindow=true);
             views = statusMgr.util.StatusManager.get("lifecycle", Type="Views");
             statusMgr.util.StatusManager.clear("lifecycle");
-            testCase.verifyFalse(isvalid(stack));
+            testCase.verifyTrue(isvalid(stack));
             testCase.verifyFalse(any(isvalid(views)));
+            delete(stack);
         end
 
         function tStacksHaveIndependentIdleStatuses(testCase)
@@ -456,7 +457,31 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             statusMgr.util.StatusManager.clear("borrowed");
             clear cleanup
             testCase.verifyTrue(isvalid(view));
-            testCase.verifyFalse(isvalid(stack));
+            testCase.verifyTrue(isvalid(stack));
+            delete(stack);
+        end
+
+        function tSnapshotRestoreKeepsStackHandles(testCase)
+            stack = statusMgr.util.StatusManager.make("kept", EnableCommandWindow=true);
+            views = statusMgr.util.StatusManager.get("kept", Type="Views");
+            token = statusMgr.util.StatusManager.snapshot();
+            statusMgr.util.StatusManager.clear();
+            testCase.verifyTrue(isvalid(stack));
+            statusMgr.util.StatusManager.restore(token);
+            testCase.verifyEqual(statusMgr.util.StatusManager.get("kept"), stack);
+            testCase.verifyTrue(all(isvalid(views)));
+        end
+
+        function tSharedStatusRemovalFailureCleansAllStacks(testCase)
+            first = statusMgr.Stack();
+            second = statusMgr.Stack();
+            testCase.addTeardown(@() delete(first));
+            testCase.addTeardown(@() delete(second));
+            shared = first.addStatus("Info", CompletionFcn=@(~) error("test:completion", "failed"));
+            second.add(shared);
+            testCase.verifyError(@() removeStatus([first second], shared), "test:completion");
+            testCase.verifyEqual(first.CurrentStatus.Type, statusMgr.StatusType.Idle);
+            testCase.verifyEqual(second.CurrentStatus.Type, statusMgr.StatusType.Idle);
         end
 
         function tRemovalFailureStillCleansLaterStacks(testCase)
@@ -471,11 +496,36 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             testCase.verifyEqual(second.CurrentStatus.Type, statusMgr.StatusType.Idle);
         end
 
-        function tRunRethrowsCompletionFailure(testCase)
+        function tRunCompletionFailureFollowsCatchErrors(testCase)
             stack = inttest.helpers.FailingRemovalStack();
             testCase.addTeardown(@() delete(stack));
-            testCase.verifyError(@() stack.run(@() 42), "test:completion");
-            testCase.verifyEqual(stack.CurrentStatus.Type, statusMgr.StatusType.Idle);
+            recorder = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(recorder));
+            testCase.verifyError(@() stack.run(@() 42, CatchErrors=false, ...
+                SuccessMessage="Must not appear"), "test:completion");
+            evalc('stack.run(@() 42, SuccessMessage="Must not appear");');
+            testCase.verifyEqual(recorder.RecordedStatuses.Type, ["Running"; "Running"; "Error"]);
+            testCase.verifyEqual(stack.CurrentStatus.Identifier, "test:completion");
+        end
+
+        function tRunKeepsWorkAndCompletionFailures(testCase)
+            stack = inttest.helpers.FailingRemovalStack();
+            testCase.addTeardown(@() delete(stack));
+            cause = captureError(@() stack.run(@fail, CatchErrors=false));
+            testCase.verifyEqual(cause.identifier, 'test:work');
+            testCase.assertNumElements(cause.cause, 1);
+            testCase.verifyEqual(cause.cause{1}.identifier, 'test:completion');
+            function fail()
+                error("test:work", "Work failed.");
+            end
+        end
+
+        function tRunRejectsPositionalArguments(testCase)
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            testCase.verifyError(@() stack.run(@(x) x, 1), ?MException);
+            testCase.verifyError(@() stack.runCancellable(@(~, x) x, 1), ?MException);
+            testCase.verifyEqual(stack.run(@(varargin) numel(varargin), Args={"Message", "hello"}), 2);
         end
     end
 end
