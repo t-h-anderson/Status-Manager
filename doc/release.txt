@@ -8,6 +8,7 @@ Unreleased
 - StatusManager: views are owned or borrowed; clear disconnects views but keeps stacks; shutdown disposes registered groups and stacks; snapshot/restore reconnects views
 - Completion callbacks all run and Completed is always raised, even if a callback throws
 - CommandWindow prints warnings without raising a second MATLAB warning
+- StatusManager.warning honours warning("off", id), also inside invoke and run; WarningCapture.isEnabled reports the caller's warning state
 
 Update Version 1.5.0
 - Massive improvements to stability and testing

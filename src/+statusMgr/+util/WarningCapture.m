@@ -14,6 +14,10 @@ classdef WarningCapture < handle
     %       % a warning was issued during the captured region
     %   end
     %   % warning() state is restored automatically when captor is deleted
+    %
+    % While a capture is active the live warning state is "all off", so
+    % use statusMgr.util.WarningCapture.isEnabled(id) to ask whether the
+    % caller had a warning enabled before the outermost capture began.
 
     properties (Access = private)
         SavedState
@@ -21,12 +25,15 @@ classdef WarningCapture < handle
         InitialId
         SavedMessage
         SavedId
+        Token
     end
 
     methods
         function obj = WarningCapture()
             obj.SavedState = warning();
             [obj.SavedMessage, obj.SavedId] = lastwarn;
+            obj.Token = statusMgr.util.uuid();
+            statusMgr.util.WarningCapture.activeStates("push", obj.Token, obj.SavedState);
             warning("off");
             % Seed lastwarn directly without emitting a warning. Restore
             % the caller's value on deletion so nested captures do not
@@ -55,8 +62,71 @@ classdef WarningCapture < handle
         end
 
         function delete(obj)
-            warning(obj.SavedState);
-            lastwarn(obj.SavedMessage, obj.SavedId);
+            if ~isempty(obj.Token)
+                statusMgr.util.WarningCapture.activeStates("pop", obj.Token);
+            end
+            if ~isempty(obj.SavedState)
+                warning(obj.SavedState);
+                lastwarn(obj.SavedMessage, obj.SavedId);
+            end
+        end
+    end
+
+    methods (Static)
+        function tf = isEnabled(identifier)
+            %ISENABLED True unless the caller's warning state disables identifier.
+            %
+            % Outside any capture this reads the live warning state. Inside
+            % one it reads the state saved by the outermost active capture,
+            % which is the state the caller set before warnings were
+            % silenced. An empty identifier follows the "all" state.
+            arguments
+                identifier (1,1) string
+            end
+            state = statusMgr.util.WarningCapture.activeStates("outermost");
+            if isempty(state)
+                state = warning();
+            end
+            tf = statusMgr.util.WarningCapture.stateFor(state, identifier) ~= "off";
+        end
+    end
+
+    methods (Static, Access = private)
+        function value = stateFor(state, identifier)
+            ids = string({state.identifier});
+            states = string({state.state});
+            match = states(ids == identifier & identifier ~= "");
+            if isempty(match)
+                match = states(ids == "all");
+            end
+            value = "on";
+            if ~isempty(match)
+                value = match(end);
+            end
+        end
+
+        function state = activeStates(action, token, saved)
+            % Ordered registry of the warning states saved by active
+            % captures, so isEnabled can see past the silencing.
+            persistent tokens states
+            if isempty(tokens)
+                tokens = strings(1, 0);
+                states = {};
+            end
+            state = [];
+            switch action
+                case "push"
+                    tokens(end+1) = token;
+                    states{end+1} = saved;
+                case "pop"
+                    keep = tokens ~= token;
+                    tokens = tokens(keep);
+                    states = states(keep);
+                case "outermost"
+                    if ~isempty(states)
+                        state = states{1};
+                    end
+            end
         end
     end
 end

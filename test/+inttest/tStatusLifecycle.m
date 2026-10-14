@@ -222,6 +222,47 @@ classdef tStatusLifecycle < matlab.uitest.TestCase
             end
         end
 
+        function tLibraryWarningsHonourDisabledIdentifiers(testCase)
+            stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(stack));
+            view = statusMgr.view.RecordingView(stack);
+            testCase.addTeardown(@() delete(view));
+            state = warning();
+            testCase.addTeardown(@() warning(state));
+            warning("off", "eLumina:test:disabled");
+
+            % Directly, and inside invoke, which silences native warnings.
+            route = statusMgr.util.StatusManager.withStack(stack); %#ok<NASGU>
+            issueWarnings();
+            stack.invoke(@issueWarnings);
+
+            testCase.verifyEqual(view.RecordedStatuses.Identifier, ...
+                ["eLumina:test:enabled"; "eLumina:test:enabled"]);
+            function issueWarnings()
+                statusMgr.util.StatusManager.warning("eLumina:test:disabled", "hidden");
+                statusMgr.util.StatusManager.warning("eLumina:test:enabled", "shown");
+            end
+        end
+
+        function tWarningCaptureReportsCallerState(testCase)
+            state = warning();
+            testCase.addTeardown(@() warning(state));
+            warning("on", "all");
+            warning("off", "eLumina:test:disabled");
+
+            outer = statusMgr.util.WarningCapture(); %#ok<NASGU>
+            inner = statusMgr.util.WarningCapture();
+            testCase.verifyFalse(statusMgr.util.WarningCapture.isEnabled("eLumina:test:disabled"));
+            testCase.verifyTrue(statusMgr.util.WarningCapture.isEnabled("eLumina:test:other"));
+            delete(inner);
+            clear outer
+            testCase.verifyFalse(statusMgr.util.WarningCapture.isEnabled("eLumina:test:disabled"));
+
+            warning("off", "all");
+            testCase.verifyFalse(statusMgr.util.WarningCapture.isEnabled("eLumina:test:other"));
+            testCase.verifyFalse(statusMgr.util.WarningCapture.isEnabled(""));
+        end
+
         function tNestedRoutesRestoreAfterFailure(testCase)
             first = statusMgr.Stack();
             second = statusMgr.Stack();

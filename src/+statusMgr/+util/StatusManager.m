@@ -225,7 +225,12 @@ classdef StatusManager < handle
             %
             % Format only when arguments are supplied, so a literal path
             % or percent sign in a message remains unchanged. No MATLAB
-            % warning is issued.
+            % warning is issued, but MATLAB's warning state is honoured:
+            % after warning("off", "lib:id") nothing is published, also
+            % inside stack.invoke and run, which silence native warnings.
+            if ~statusMgr.util.WarningCapture.isEnabled(identifier)
+                return
+            end
             if ~isempty(varargin)
                 message = sprintf(message, varargin{:});
             end
