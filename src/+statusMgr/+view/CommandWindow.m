@@ -30,6 +30,7 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
             end
 
             % Set view parent and stack properties
+            obj.RefreshOnRemoval = false;
             obj.setStack(stack);
             set(obj, nvp);
         end
@@ -46,8 +47,30 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
     end
 
     methods (Access = protected)
+        function clearDisplay(obj)
+            obj.clearRunning();
+        end
+
+        function cleanupCompletedStatus(obj)
+            if ~isempty(obj.IncomingStatus) && ...
+                    (~isvalid(obj.IncomingStatus) || obj.IncomingStatus.IsComplete)
+                obj.clearRunning();
+            end
+        end
+
         function beforeDisplay(obj)
             obj.clearRunning();
+        end
+
+        function displayBackgroundUpdate(obj, status)
+            % Print progress beneath the top of the stack without touching
+            % the running indicator, which belongs to the current status.
+            if ismember(status.Type, [statusMgr.StatusType.Running, ...
+                    statusMgr.StatusType.RunningCancellable])
+                obj.writeToTerminal(status.Message);
+            else
+                displayBackgroundUpdate@statusMgr.internal.view.StatusViewBase(obj, status);
+            end
         end
 
         function displayRunning(obj, status, ~)
@@ -105,7 +128,7 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
                 obj (1,1) statusMgr.view.CommandWindow
                 status (1,1) statusMgr.Status
             end
-            warning(status.Identifier, "%s", "Warning: " + status.Message);
+            obj.writeToTerminal("Warning: " + status.Message, 2);
         end
 
         function displaySuccess(obj, status)
@@ -167,10 +190,9 @@ classdef CommandWindow < statusMgr.internal.view.StatusViewBase
                 message (1,1) string
                 id (1,1) double {mustBeMember(id, [1,2])} = 1 % 1 for normal, 2 for error
             end
-            if message ~= obj.PreviousMessage || ~obj.ShowRepeatedAsDots
+            if id == 2 || message ~= obj.PreviousMessage || ~obj.ShowRepeatedAsDots
                 % First time we've seen this message (or the toggle is
-                % off): print it on its own line. "%s" guards against
-                % `%` in user content being interpreted as a format spec.
+                % off): print it on its own line.
                 fprintf(id, "%s\n", message);
             else
                 % Same message as last time: collapse to a single "."

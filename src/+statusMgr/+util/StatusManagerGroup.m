@@ -5,6 +5,11 @@ classdef StatusManagerGroup < handle
     %
     % All views in the group are connected to the same Stack. Adding a view
     % (including an existing one) re-connects it to this group's Stack.
+    %
+    % Ownership: views added with Owned=true (as StatusManager does for
+    % views it creates) are deleted when removed or when the group is
+    % deleted. Other views are only disconnected (setStack([])) and can be
+    % reused. Deleting the group never deletes its Stack.
 
     properties (SetAccess = protected)
         Stack
@@ -12,24 +17,66 @@ classdef StatusManagerGroup < handle
             statusMgr.internal.view.StatusViewInterface.empty(1,0)
     end
 
+    properties (Access = private)
+        % Parallel to Views: true for views the group created or was
+        % handed ownership of. Only owned views are deleted with the group.
+        IsOwned (1,:) logical = false(1,0)
+    end
+
     methods
+        function delete(obj)
+            % Release owned views only. The Stack is left untouched:
+            % callers may still hold the handle returned by make(). Use
+            % StatusManager.shutdown() to destroy stacks explicitly.
+            obj.disconnectViews();
+            owned = obj.Views(obj.IsOwned);
+            delete(owned(isvalid(owned)));
+        end
+
+
+        function disconnectViews(obj)
+            %DISCONNECTVIEWS Detach views still bound to this group's Stack.
+            % Keeps the handles so reconnectViews (used by restore) can
+            % rebind them, but stops their listeners and active displays.
+            % Views since rebound to another stack are left alone.
+            for view = obj.Views
+                if isvalid(view) && isequal(view.Stack, obj.Stack)
+                    view.setStack(statusMgr.Stack.empty(1,0));
+                end
+            end
+        end
+
+        function reconnectViews(obj)
+            %RECONNECTVIEWS Rebind disconnected views to this group's Stack.
+            for view = obj.Views
+                if isvalid(view) && isempty(view.Stack)
+                    view.setStack(obj.Stack);
+                end
+            end
+        end
 
         function obj = StatusManagerGroup()
             obj.Stack = statusMgr.Stack();
         end
 
-        function addView(obj, view)
+        function addView(obj, view, nvp)
             %ADDVIEW Connect view to this group's Stack and register it.
+            %   group.addView(view)              % caller keeps ownership
+            %   group.addView(view, Owned=true)  % deleted with the group
             arguments
                 obj  (1,1)
                 view (1,1) statusMgr.internal.view.StatusViewInterface
+                nvp.Owned (1,1) logical = false
             end
             view.setStack(obj.Stack);
             obj.Views = [obj.Views, view];
+            obj.IsOwned = [obj.IsOwned, nvp.Owned];
         end
 
         function removeView(obj, idx)
             %REMOVEVIEW Remove the view at position idx.
+            % Views the group owns are deleted; borrowed views are only
+            % detached from the group, so the caller can reuse them.
             arguments
                 obj (1,1)
                 idx (1,1) double {mustBeInteger, mustBePositive}
@@ -39,7 +86,16 @@ classdef StatusManagerGroup < handle
                     "View index %d exceeds number of views (%d).", ...
                     idx, numel(obj.Views));
             end
+            view = obj.Views(idx);
+            owned = obj.IsOwned(idx);
             obj.Views(idx) = [];
+            obj.IsOwned(idx) = [];
+            if isvalid(view) && isequal(view.Stack, obj.Stack)
+                view.setStack(statusMgr.Stack.empty(1,0));
+            end
+            if owned
+                delete(view);
+            end
         end
 
         function views = findViews(obj, nvp)
@@ -98,6 +154,12 @@ classdef StatusManagerGroup < handle
             % the index-shifting that reverse-order looping guards against.
             removed = obj.Views(mask);
             obj.Views(mask) = [];
+            obj.IsOwned(mask) = [];
+            for view = removed
+                if isvalid(view) && isequal(view.Stack, obj.Stack)
+                    view.setStack(statusMgr.Stack.empty(1,0));
+                end
+            end
             if nvp.Delete
                 delete(removed);
             end
@@ -116,7 +178,7 @@ classdef StatusManagerGroup < handle
                 view (1,1) statusMgr.internal.view.StatusViewInterface
                 nvp.Delete (1,1) logical = false
             end
-            obj.addView(view);
+            obj.addView(view, Owned=nvp.Delete);
             doDelete = nvp.Delete;
             cleanup = onCleanup(@() ...
                 statusMgr.util.StatusManagerGroup.scopedRemove(obj, view, doDelete));

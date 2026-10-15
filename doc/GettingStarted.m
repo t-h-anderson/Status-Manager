@@ -109,6 +109,15 @@ myStack.run(@() warning("mywarn:test","hello world warning")); %[output:0446e47d
 myStack.run(@() error("boom"), CatchErrors=false);
 myStack.run(@() warning("test:w","ignored"), CatchWarnings=false);
 %%
+%[text] Name the progress status, announce success, and pass arguments through Args. Arguments are only accepted via Args, so a forwarded string such as "Message" is never mistaken for an option. The progress status is removed before the outcome (Warning, then Error or Success) is published.
+myStack.run(@(x) pause(x), Args={1}, ...
+    Message="Waiting a moment…", SuccessMessage="Done waiting");
+%%
+%[text] ## UI callbacks
+%[text] Wrap App Designer callbacks in invoke. Anything the callback throws, and the last warning it issues, is published to the stack's views rather than lost in the command window.
+b = uibutton(f, Text="Fail", ...
+    ButtonPushedFcn=@(~, ~) myStack.invoke(@() error("myapp:demo", "Callback failed")));
+%%
 %[text] ## Cooperative cancellation
 %[text] runCancellable wraps a function with a RunningCancellable status and passes that Status as the first argument. A cancel-aware view (e.g. the Popup progress dialog Cancel button) calls status.complete(); the running function polls status.IsComplete and exits. While the function is running, IsComplete=true unambiguously means "cancel requested" — the natural-completion path only fires after the function returns.
 myStack.runCancellable(@(status) doSlowWork(status));
@@ -144,6 +153,16 @@ audit = statusMgr.view.FileLog(myStack, ...
 %[text] FileLog accepts a JSON-lines format and a byte-cap that rotates the log when it grows past MaxBytes. Rotation appends "\_N" before the file extension, e.g. Log.txt → Log\_1.txt → Log\_2.txt.
 statusMgr.view.FileLog(myStack, LogFolder=pwd, ...
     Format="json-lines", MaxBytes=1e6);
+%%
+%[text] ## Named groups and diagnostics
+%[text] StatusManager keeps named stacks with their views, so any part of an app can fetch the same stack by name. Views it creates are owned by the group; views you add with addView stay yours. clear disconnects a group's views but never deletes its stack; shutdown disposes of everything.
+editorStack = statusMgr.util.StatusManager.make("Editor", EnableCommandWindow=true);
+sameStack = statusMgr.util.StatusManager.get("Editor");
+%[text] Library code without a stack handle can report through whichever stack is active. run, runCancellable and invoke make their stack active; withStack does so for any scope. With no active stack, reports go to the Default group.
+route = statusMgr.util.StatusManager.withStack(editorStack);
+statusMgr.util.StatusManager.warning("myapp:io:retry", "Retrying %s", "data.csv");
+clear route
+statusMgr.util.StatusManager.clear("Editor");
 %%
 %[text] ## Background work via parfeval
 %[text] runInBackground launches a parfeval future on the backgroundPool, pushes a RunningCancellable status, and converts the future's terminal state into either status completion (success) or an Error status (failure). The StatusBar's Cancel button cancels the future. For streaming progress, pass a parallel.pool.DataQueue to both the worker (which calls send) and runInBackground (which calls afterEach internally to update the status):

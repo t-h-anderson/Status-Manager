@@ -58,7 +58,6 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
             % Add listener to stack
             obj.setStack(stack);
 
-            obj.standardDisplay();
         end
 
         function tf = isVisible(obj)
@@ -71,13 +70,46 @@ classdef Popup < statusMgr.internal.view.StatusViewBase
         end
 
         function delete(obj)
-            obj.deleteProgressDlg();
+            delete(obj.StackListener);
+            obj.clearDisplay();
         end
 
     end
 
     methods (Access = protected)
         % These methods can be overloaded to tailor the view behaviour
+        function clearDisplay(obj)
+            obj.deleteProgressDlg();
+            obj.ProgressDlgStatus = statusMgr.Status.empty(1,0);
+            if ~isempty(obj.Parent) && isgraphics(obj.Parent)
+                obj.clearPreviousAlert(obj.Figure);
+            else
+                obj.HasPopup = false;
+            end
+            if ~isempty(obj.InputDialog) && isvalid(obj.InputDialog)
+                % Closing the input dialog returns its default value.
+                close(obj.InputDialog);
+            end
+        end
+
+        function updateDisplayedStatus(obj, status)
+            % Do not check the stack top here: it may be filtered while
+            % the existing progress dialog still belongs to this status.
+            obj.clearPreviousAlert(obj.Figure);
+            obj.dispatchDisplay(status);
+        end
+
+        function cleanupCompletedStatus(obj)
+            if ~isempty(obj.ProgressDlgStatus) && ...
+                    (~isvalid(obj.ProgressDlgStatus) || obj.ProgressDlgStatus.IsComplete)
+                obj.deleteProgressDlg();
+            end
+            if obj.HasPopup && ~isempty(obj.IncomingStatus) && ...
+                    (~isvalid(obj.IncomingStatus) || obj.IncomingStatus.IsComplete)
+                obj.clearPreviousAlert(obj.Figure);
+            end
+        end
+
         function beforeDisplay(obj)
             obj.clearPreviousAlert(obj.Figure);
             obj.checkProgressDlg();

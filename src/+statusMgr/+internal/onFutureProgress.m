@@ -38,4 +38,4 @@ if ~didUpdate
     return
 end
 
-statusMgr.Stack.notifyIfCurrentStatus(stack, status);
+statusMgr.Stack.notifyStatusUpdated(stack, status);

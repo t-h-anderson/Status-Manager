@@ -1,9 +1,22 @@
 classdef Stack < statusMgr.internal.StackInterface
-    %STACK
-    % Use example:
-    % statusStack = statusMgr.Stack();
-    % [newStatus, cleanObj] = statusStack.addStatus(statusMgr.StatusType.Running, "Initialising");
-    % statusStack.updateStatus(newStatus, Message="Working...");
+    %STACK A stack of statuses observed by one or more views.
+    %
+    % The status on top of the stack is the current one. Views listen to
+    % the StatusUpdated event, whose StatusEventData says whether a status
+    % was Added, Updated or removed (Refresh).
+    %
+    %   stack = statusMgr.Stack();
+    %   [status, cleanup] = stack.addStatus("Running", Message="Initialising");
+    %   stack.updateStatus(status, Message="Working...", Value=0.5);
+    %   clear cleanup   % removes the status
+    %
+    % Wrapping work:
+    %   stack.run(@fcn, Args={a}, SuccessMessage="Done")   % synchronous
+    %   stack.runCancellable(@(status) fcn(status))        % cooperative cancel
+    %   stack.runInBackground(@fcn, Args={a})              % parfeval
+    %   stack.invoke(@() callback())                       % UI callbacks
+    %
+    % See also statusMgr.util.StatusManager, statusMgr.view.Popup
 
     properties (SetAccess = protected)
         % Empty default rather than statusMgr.Status("Idle"): a handle
@@ -170,7 +183,7 @@ classdef Stack < statusMgr.internal.StackInterface
                     cleanupObj(end+1) = onCleanup(@() obj.removeStatus(newStatus)); %#ok<AGROW>
                 end
                 if ~nvp.Silent
-                    notify(obj, "StatusUpdated");
+                    notify(obj, "StatusUpdated", statusMgr.monitorable.StatusEventData(newStatus, "Added"));
                 end
             end
         end
@@ -221,6 +234,13 @@ classdef Stack < statusMgr.internal.StackInterface
     methods % Updating
 
         function updateStatus(objs, status, nvp)
+            % Change a status's Message and/or Value and notify views.
+            %
+            %   stack.updateStatus(status, Message="Step 2", Value=0.4)
+            %
+            % The status need not be on top. Log views record updates to
+            % any status; display views only redraw for the status they
+            % are showing.
             arguments
                 objs (1,:) statusMgr.Stack
                 status (1,1) statusMgr.Status
@@ -242,18 +262,20 @@ classdef Stack < statusMgr.internal.StackInterface
                         obj.CurrentStatus.updateValue(nvp.Value);
                     end
                     if isfield(nvp, "Message") || isfield(nvp, "Value")
-                        notify(obj, "StatusUpdated");
+                        notify(obj, "StatusUpdated", statusMgr.monitorable.StatusEventData(status, "Updated"));
                     end
                 else
-                    % Otherwise find it in the stack. We don't issue
-                    % StatusUpdated in this case because views read the
-                    % current (top) status, which hasn't changed.
+                    % Log an explicit update even underneath the current
+                    % status. UI views still read the top of the stack.
                     idx = ([obj.Statuses.ID] == status.ID);
                     if isfield(nvp, "Message")
                         obj.Statuses(idx).updateMessage(nvp.Message);
                     end
                     if isfield(nvp, "Value")
                         obj.Statuses(idx).updateValue(nvp.Value);
+                    end
+                    if any(idx) && (isfield(nvp, "Message") || isfield(nvp, "Value"))
+                        notify(obj, "StatusUpdated", statusMgr.monitorable.StatusEventData(status, "Updated"));
                     end
                 end
             end
@@ -264,8 +286,11 @@ classdef Stack < statusMgr.internal.StackInterface
     methods % Removing
 
         function removeStatus(objs, toRemove, nvp)
-            % Remove a status from the stack
-            % - doesn't have to be top of the stack!
+            % Remove statuses from one or more stacks and complete them.
+            % They do not have to be on top of the stack.
+            %
+            % If a completion callback throws, every stack is still
+            % cleaned up and notified before the failure is rethrown.
 
             arguments
                 objs (1,:) statusMgr.Stack
@@ -273,8 +298,13 @@ classdef Stack < statusMgr.internal.StackInterface
                 nvp.Silent (1,1) logical = false
             end
 
+            % Clean up every stack before reporting a completion failure.
+            failure = MException.empty(0,1);
             for ii = 1:numel(objs)
                 obj = objs(ii);
+                if ~isvalid(obj)
+                    continue
+                end
 
                 % Check if last status
                 if isscalar(toRemove) ...
@@ -293,12 +323,23 @@ classdef Stack < statusMgr.internal.StackInterface
                 % attachStatus; drop the matching slots in lockstep.
                 delete(obj.StatusListeners(matchingIdx));
                 obj.StatusListeners(matchingIdx) = [];
-                toComplete.complete();
-
-                if ~nvp.Silent
-                    notify(obj, "StatusUpdated");
+                try
+                    toComplete.complete();
+                catch cause
+                    if isempty(failure)
+                        failure = cause;
+                    else
+                        failure = addCause(failure, cause);
+                    end
                 end
 
+                if ~nvp.Silent && isvalid(obj)
+                    notify(obj, "StatusUpdated", statusMgr.monitorable.StatusEventData(obj.CurrentStatus, "Refresh"));
+                end
+
+            end
+            if ~isempty(failure)
+                rethrow(failure);
             end
 
         end
@@ -359,7 +400,9 @@ classdef Stack < statusMgr.internal.StackInterface
             % Progress updates: pass an optional parallel.pool.DataQueue
             % that the worker calls send() on. Numeric scalars set the
             % status's Value; strings update Message; structs with
-            % Value/Message fields update both.
+            % Value/Message fields update both. Views are notified even
+            % when the status is not on top. Once the future finishes,
+            % completion waits up to 2 s for queued progress to arrive.
             %
             % Terminal detection uses a periodic poll (PollPeriod
             % seconds, default 0.5) on future.State so we catch both
@@ -404,7 +447,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 progressSubscription = obj.makeProgressSubscription(status, nvp.ProgressQueue);
             end
 
-            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription);
+            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription, nvp.ProgressQueue);
         end
 
         function [future, status] = runInBackground(obj, fcnHandle, nvp)
@@ -461,7 +504,7 @@ classdef Stack < statusMgr.internal.StackInterface
                 progressSubscription = obj.makeProgressSubscription(status, nvp.ProgressQueue);
             end
 
-            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription);
+            obj.attachFutureMonitoring(status, future, nvp.PollPeriod, progressSubscription, nvp.ProgressQueue);
         end
 
         function varargout = run(obj, fcnHandle, nvp)
@@ -473,22 +516,43 @@ classdef Stack < statusMgr.internal.StackInterface
             %   stack.run(@myFcn)
             %   stack.run(@myFcn, Args={arg1, arg2})
             %   stack.run(@myFcn, CatchErrors=false)
-            %   stack.run(@myFcn, Args={arg1, arg2}, CatchWarnings=false)
+            %   stack.run(@myFcn, Message="Saving", SuccessMessage="Saved")
             %
             % Args is a cell of positional arguments forwarded to
             % fcnHandle (matching runInBackground's spelling). For a
-            % zero-arg call, omit Args.
+            % zero-arg call, omit Args. Function arguments are only taken
+            % via Args, so they can never be mistaken for runner options.
+            %
+            % Message/Identifier name the Running status (default
+            % "Running: <function>"). SuccessMessage/SuccessIdentifier
+            % publish a Success status when the call succeeds;
+            % SuccessIsTemporary (default true) lets the next status
+            % replace it.
+            %
+            % Outcome order: the Running status is removed, then the
+            % captured warning is published, then Error or Success. A
+            % failing completion callback on the Running status counts as
+            % a failure of the run (no Success; follows CatchErrors). If
+            % fcnHandle also failed, its error is reported with the
+            % completion failure as a cause. While fcnHandle runs, this
+            % stack is the StatusManager diagnostics route; if fcnHandle
+            % deletes the stack, the outcome goes to the enclosing route.
             arguments
                 obj (1,1) statusMgr.Stack
                 fcnHandle (1,1) function_handle
                 nvp.Args (1,:) cell = {}
                 nvp.CatchErrors (1,1) logical = true
                 nvp.CatchWarnings (1,1) logical = true
+                nvp.Message (1,1) string = ""
+                nvp.Identifier (1,1) string = ""
+                nvp.SuccessMessage (1,1) string = ""
+                nvp.SuccessIdentifier (1,1) string = ""
+                nvp.SuccessIsTemporary (1,1) logical = true
             end
 
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("Running", false, ...
-                fcnHandle, nvp.Args, nvp.CatchErrors, nvp.CatchWarnings);
+                fcnHandle, nvp.Args, nvp);
         end
 
         function varargout = runCancellable(obj, fcnHandle, nvp)
@@ -511,22 +575,26 @@ classdef Stack < statusMgr.internal.StackInterface
             %   end
             %
             % While the function is running, status.IsComplete=true
-            % unambiguously means "cancel requested" — the natural-
-            % completion path (the onCleanup created internally) fires
-            % only after fcnHandle returns. Otherwise behaves
-            % identically to run() — same name-value flags, same
-            % warning capture, same status cleanup.
+            % unambiguously means "cancel requested" — the status is only
+            % completed by the runner after fcnHandle returns. Otherwise
+            % behaves identically to run() — same name-value options,
+            % same warning capture, same outcome order.
             arguments
                 obj (1,1) statusMgr.Stack
                 fcnHandle (1,1) function_handle
                 nvp.Args (1,:) cell = {}
                 nvp.CatchErrors (1,1) logical = true
                 nvp.CatchWarnings (1,1) logical = true
+                nvp.Message (1,1) string = ""
+                nvp.Identifier (1,1) string = ""
+                nvp.SuccessMessage (1,1) string = ""
+                nvp.SuccessIdentifier (1,1) string = ""
+                nvp.SuccessIsTemporary (1,1) logical = true
             end
 
             varargout = cell(1, nargout);
             [varargout{:}] = obj.runWithStatus("RunningCancellable", true, ...
-                fcnHandle, nvp.Args, nvp.CatchErrors, nvp.CatchWarnings);
+                fcnHandle, nvp.Args, nvp);
         end
 
     end
@@ -534,7 +602,7 @@ classdef Stack < statusMgr.internal.StackInterface
     methods (Access = protected)
 
         function varargout = runWithStatus(obj, statusType, passStatusFirst, ...
-                fcnHandle, fcnArgs, catchErrors, catchWarnings)
+                fcnHandle, fcnArgs, options)
             % Shared body of run() and runCancellable(): push a status,
             % run fcnHandle, capture errors/warnings, clean up.
             %   statusType        - StatusType to push for the duration
@@ -543,39 +611,114 @@ classdef Stack < statusMgr.internal.StackInterface
             %                       work uses this to read IsComplete)
             %   fcnArgs (cell)    - positional args from the caller
 
-            [status, statusCleanup] = obj.addStatus(statusType, ...
-                "Message", "Running: " + statusMgr.Stack.functionLabel(fcnHandle)); %#ok<ASGLU>
+            route = statusMgr.util.StatusManager.withStack(obj); %#ok<NASGU>
 
-            % WarningCapture silences warnings, sets a sentinel via
-            % lastwarn, and restores the prior warning state on delete.
-            captor = statusMgr.util.WarningCapture();
-
+            message = options.Message;
+            if message == ""
+                message = "Running: " + statusMgr.Stack.functionLabel(fcnHandle);
+            end
+            status = obj.addStatus(statusType, ...
+                Message=message, Identifier=options.Identifier);
+            % Only acts if the explicit removal below is never reached
+            % (e.g. Ctrl+C while fcnHandle runs).
+            runningStack = obj;
+            statusGuard = onCleanup(@() ...
+                statusMgr.Stack.removeUnlessComplete(runningStack, status)); %#ok<NASGU>
+            captor = [];
+            if options.CatchWarnings
+                captor = statusMgr.util.WarningCapture();
+            end
             if passStatusFirst
                 fcnArgs = [{status}, fcnArgs];
             end
-
+            varargout = cell(1, nargout);
+            failure = [];
             try
-                if nargout > 0
-                    varargout = cell(1, nargout);
-                    [varargout{:}] = fcnHandle(fcnArgs{:});
-                else
-                    fcnHandle(fcnArgs{:});
-                end
-            catch me
-                if ~catchErrors
-                    rethrow(me);
-                end
-                obj.addError(me);
+                [varargout{:}] = fcnHandle(fcnArgs{:});
+            catch cause
+                failure = cause;
             end
 
-            if catchWarnings
-                [warningMsg, ~] = captor.warning();
-                if warningMsg ~= ""
-                    obj.addStatus("Warning", "Message", warningMsg);
+            warningMsg = "";
+            if options.CatchWarnings
+                [warningMsg, warningId] = captor.warning();
+                delete(captor);
+            end
+
+            % Finish progress before publishing the outcome. Removing it
+            % afterwards redisplays the outcome through StatusUpdated.
+            % Remove it explicitly, after warnings are restored, so a
+            % failing CompletionFcn reaches the caller instead of being
+            % swallowed by an onCleanup destructor.
+            % A completion failure is a failure of the run: it suppresses
+            % Success and follows CatchErrors. If the work failed too,
+            % keep both, with the work's error as the primary one.
+            try
+                statusMgr.Stack.removeUnlessComplete(obj, status);
+            catch cause
+                if isempty(failure)
+                    failure = cause;
+                else
+                    failure = addCause(failure, cause);
                 end
+            end
+
+            if ~isvalid(obj)
+                obj = statusMgr.util.StatusManager.currentStack();
+            end
+            if warningMsg ~= ""
+                obj.addStatus("Warning", Identifier=warningId, Message=warningMsg);
+            end
+            if ~isempty(failure)
+                if ~options.CatchErrors
+                    rethrow(failure);
+                end
+                obj.addError(failure);
+            elseif options.SuccessMessage ~= ""
+                obj.addStatus("Success", Identifier=options.SuccessIdentifier, ...
+                    Message=options.SuccessMessage, MessageShort=options.SuccessMessage, ...
+                    IsTemporary=options.SuccessIsTemporary);
             end
         end
 
+    end
+
+    methods
+        function invoke(obj, action)
+            % UI callback boundary: route library diagnostics and report
+            % uncaught exceptions through the configured status views.
+            %
+            %   button.ButtonPushedFcn = @(~, ~) stack.invoke(@() app.load());
+            %
+            % While action runs, this stack is the StatusManager
+            % diagnostics route. Afterwards the last native warning is
+            % published as a Warning status and an uncaught exception as
+            % an Error status; the exception is not rethrown. If action
+            % deletes the stack, both go to the enclosing route.
+            route = statusMgr.util.StatusManager.withStack(obj); %#ok<NASGU>
+            captor = statusMgr.util.WarningCapture();
+            failure = [];
+            try
+                action();
+            catch cause
+                failure = cause;
+            end
+            [message, identifier] = captor.warning();
+            delete(captor);
+            % The action may have closed its owning app and stack.
+            if message == "" && isempty(failure)
+                return
+            end
+            if ~isvalid(obj)
+                obj = statusMgr.util.StatusManager.currentStack();
+            end
+            if message ~= ""
+                obj.addStatus("Warning", Identifier=identifier, Message=message);
+            end
+            if ~isempty(failure)
+                obj.addError(failure);
+            end
+        end
     end
 
     methods % User input
@@ -586,6 +729,9 @@ classdef Stack < statusMgr.internal.StackInterface
             %
             % value = requestInput(prompt)
             % value = requestInput(prompt, DefaultValue="fallback", Timeout=5, Title="...")
+            %
+            % If the InputField or Popup collecting the value is
+            % disconnected first, the request returns DefaultValue.
             arguments
                 obj (1,1) statusMgr.Stack
                 prompt (1,1) string = ""
@@ -746,13 +892,14 @@ classdef Stack < statusMgr.internal.StackInterface
                 @(v) statusMgr.internal.onFutureProgress(statusID, v));
         end
 
-        function attachFutureMonitoring(obj, status, future, pollPeriod, progressSubscription)
+        function attachFutureMonitoring(obj, status, future, pollPeriod, progressSubscription, progressQueue)
             arguments
                 obj (1,1) statusMgr.Stack
                 status (1,1) statusMgr.Status
                 future (1,1) parallel.Future
                 pollPeriod (1,1) double {mustBePositive}
                 progressSubscription = []
+                progressQueue = []
             end
 
             weakStack = matlab.lang.WeakReference(obj);
@@ -761,7 +908,7 @@ classdef Stack < statusMgr.internal.StackInterface
             pollTimer = timer( ...
                 "ExecutionMode", "fixedSpacing", ...
                 "Period", pollPeriod, ...
-                "TimerFcn", @(t,~) statusMgr.Stack.pollFutureState(t, weakStack, weakStatus, future));
+                "TimerFcn", @(t,~) statusMgr.Stack.pollFutureState(t, weakStack, weakStatus, future, progressQueue));
             start(pollTimer);
 
             completionListener = addlistener(status, "Completed", ...
@@ -892,7 +1039,7 @@ classdef Stack < statusMgr.internal.StackInterface
             end
         end
 
-        function pollFutureState(pollTimer, weakStack, weakStatus, future)
+        function pollFutureState(pollTimer, weakStack, weakStatus, future, progressQueue)
             % monitorFuture's poll callback. Stops the timer and
             % completes the status when the future reaches a terminal
             % state. Failures are converted into an Error status on
@@ -912,6 +1059,19 @@ classdef Stack < statusMgr.internal.StackInterface
             if ~ismember(string(future.State), terminalStates)
                 return
             end
+            % Worker completion can precede delivery of its queued progress.
+            % Let the event loop drain those callbacks before disposing of
+            % the subscription and completing the status. The wait is
+            % bounded: a queue shared with other producers may never empty.
+            if ~isempty(progressQueue) && progressQueue.QueueLength > 0
+                drainLimit = 2; % seconds
+                if isempty(pollTimer.UserData)
+                    pollTimer.UserData = tic;
+                    return
+                elseif toc(pollTimer.UserData) < drainLimit
+                    return
+                end
+            end
             statusMgr.util.stopTimer(pollTimer);
             if ~isempty(future.Error)
                 stack.addError(future.Error);
@@ -919,47 +1079,7 @@ classdef Stack < statusMgr.internal.StackInterface
             status.complete();
         end
 
-        function onProgressFromWorker(weakStack, weakStatus, value)
-            % Translate a value sent on the progress DataQueue into a
-            % status update. Numeric scalar → Value; string → Message;
-            % struct with Value/Message → both. If the stack or status
-            % has been GC'd by the user, drop the update silently.
-            stack = weakStack.Handle;
-            status = weakStatus.Handle;
-            if isempty(stack) || isempty(status) ...
-                    || ~isvalid(stack) || ~isvalid(status)
-                return
-            end
-            if isnumeric(value) && isscalar(value)
-                status.updateValue(double(value));
-                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
-            elseif isstring(value) || (ischar(value) && (isrow(value) || isempty(value)))
-                status.updateMessage(string(value));
-                statusMgr.Stack.notifyIfCurrentStatus(stack, status);
-            elseif isstruct(value)
-                if isfield(value, "Value")
-                    status.updateValue(double(value.Value));
-                end
-                if isfield(value, "Message")
-                    status.updateMessage(string(value.Message));
-                end
-                if isfield(value, "Value") || isfield(value, "Message")
-                    statusMgr.Stack.notifyIfCurrentStatus(stack, status);
-                else
-                    warning("statusMgr:Stack:unhandledProgressValue", ...
-                        "Progress struct has neither a Value nor a Message " + ...
-                        "field; no update applied. Send a numeric scalar, a " + ...
-                        "string, or a struct with Value and/or Message fields.");
-                end
-            else
-                warning("statusMgr:Stack:unhandledProgressValue", ...
-                    "Progress value of type '%s' (size %s) was ignored. Send a " + ...
-                    "numeric scalar, a string, or a struct with Value and/or " + ...
-                    "Message fields.", class(value), mat2str(size(value)));
-            end
-        end
-
-        function notifyIfCurrentStatus(stack, status)
+        function notifyStatusUpdated(stack, status)
             if isempty(stack) || ~isvalid(stack)
                 return
             end
@@ -968,9 +1088,7 @@ classdef Stack < statusMgr.internal.StackInterface
             if ~any(idx)
                 return
             end
-            if stack.CurrentStatus.ID == status.ID
-                notify(stack, "StatusUpdated");
-            end
+            notify(stack, "StatusUpdated", statusMgr.monitorable.StatusEventData(status, "Updated"));
         end
 
         function onStatusCompletedCancelFuture(weakStack, status, future, pollTimer)
@@ -990,6 +1108,13 @@ classdef Stack < statusMgr.internal.StackInterface
         function label = functionLabel(fcnHandle)
             label = eraseBetween(func2str(fcnHandle), textBoundary, ")", ...
                 "Boundaries", "inclusive");
+        end
+
+        function removeUnlessComplete(stack, status)
+            % Remove a run() status unless it has already been completed.
+            if isvalid(stack) && isvalid(status) && ~status.IsComplete
+                stack.removeStatus(status);
+            end
         end
 
     end

@@ -10,8 +10,9 @@ classdef tPopupView < matlab.uitest.TestCase
     methods (TestMethodSetup)
         function setup(testCase)
             testCase.Stack = statusMgr.Stack();
+            testCase.addTeardown(@() delete(testCase.Stack));
             
-            testCase.Figure = figure(Position=[1 1 796 479]);
+            testCase.Figure = uifigure(Visible="on", Position=[1 1 796 479]);
             testCase.addTeardown(@delete, testCase.Figure);
             testCase.PopupView = statusMgr.view.Popup(testCase.Figure, testCase.Stack);
             testCase.addTeardown(@() delete(testCase.PopupView));
@@ -48,7 +49,7 @@ classdef tPopupView < matlab.uitest.TestCase
             % Calling displayRunning with only the status argument applies
             % the cancellable=false default. Use a private fixture stack
             % so this view is the only listener.
-            fig = figure(Position=[1 1 400 200]);
+            fig = uifigure(Visible="on", Position=[1 1 400 200]);
             testCase.addTeardown(@() delete(fig))
             stack = statusMgr.Stack();
             view = inttest.helpers.PopupAccess(fig, stack);
@@ -62,7 +63,7 @@ classdef tPopupView < matlab.uitest.TestCase
             % popupAlert(status) without title/icon applies the
             % "Error"/"error" defaults. Use a private fixture stack so
             % only this view's uiconfirm dialog is produced, then dismiss.
-            fig = figure(Position=[1 1 400 200]);
+            fig = uifigure(Visible="on", Position=[1 1 400 200]);
             testCase.addTeardown(@() delete(fig))
             stack = statusMgr.Stack();
             view = inttest.helpers.PopupAccess(fig, stack);
@@ -224,15 +225,14 @@ classdef tPopupView < matlab.uitest.TestCase
         end
 
         function tCancelIndeterminateProgressDialog(testCase)
-            % This test fails sometimes because of the explicit click
-            % location. Running with a breakpoint on the "press" line
-            % sometimes fixes this
             status = testCase.Stack.addStatus("RunningCancellable", Message="test");
-
-            pause(2)
-            testCase.press(testCase.Figure, [520,205]) % click the Cancel button
-            pause(2)
-
+            % Exercise the same flag set by the Cancel button without
+            % depending on dialog geometry or screen scaling.
+            testCase.PopupView.ProgressDlg.CancelRequested = true;
+            deadline = tic;
+            while ~status.IsComplete && toc(deadline) < 3
+                pause(0.05);
+            end
             testCase.verifyTrue(status.IsComplete)
             testCase.verifyEqual(testCase.Stack.CurrentStatus.Type, statusMgr.StatusType.Idle)
         end
@@ -296,7 +296,7 @@ classdef tPopupView < matlab.uitest.TestCase
             % fire (e.g. the dialog was dismissed via Esc / X in a
             % MATLAB version that skips the callback). The next status
             % should still be displayed without erroring.
-            fig = figure(Position=[1 1 400 200]);
+            fig = uifigure(Visible="on", Position=[1 1 400 200]);
             testCase.addTeardown(@() delete(fig));
             stack = statusMgr.Stack();
             access = inttest.helpers.PopupAccess(fig, stack);
@@ -358,7 +358,7 @@ classdef tPopupView < matlab.uitest.TestCase
             % two stacks.
             testCase.Stack.addStatus("Warning", Message="warning");
             newStack = statusMgr.Stack();
-            newFigure = figure();
+            newFigure = uifigure();
             testCase.addTeardown(@delete, newFigure);
             newPopup = statusMgr.view.Popup(newFigure, newStack);
             testCase.addTeardown(@() delete(newPopup))
@@ -415,13 +415,16 @@ classdef tPopupView < matlab.uitest.TestCase
             % If you create the view after a status has been added, that
             % status is still visible.
             testCase.Stack.addStatus("Warning", Message="warning");
-            newFigure = figure();
+            newFigure = uifigure();
             testCase.addTeardown(@delete, newFigure);
             newPopupView = statusMgr.view.Popup(newFigure, testCase.Stack);
             testCase.addTeardown(@() delete(newPopupView));
 
+            testCase.verifyTrue(newPopupView.HasPopup)
+            testCase.verifyEqual(newPopupView.IncomingStatus.Message, "warning")
             testCase.chooseDialog("uiconfirm", testCase.Figure, "OK")
-            testCase.verifyEqual(newPopupView.PreviousStatus.Message, "warning")
+            testCase.verifyFalse(newPopupView.HasPopup)
+            testCase.verifyFalse(testCase.PopupView.HasPopup)
         end
 
         function tProgressDialogCustomTitle(testCase)

@@ -62,6 +62,7 @@ classdef RecordingView < statusMgr.internal.view.StatusSinkViewBase
                 nvp.IncludeIdentifiers (1,:) string = string.empty(1,0)
                 nvp.ExcludeIdentifiers (1,:) string = string.empty(1,0)
             end
+            obj.RefreshOnRemoval = false;
             obj.setStack(stack);
             set(obj, nvp);
         end
