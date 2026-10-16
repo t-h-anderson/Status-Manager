@@ -111,7 +111,7 @@ matlab.addons.toolbox.packageToolbox( opts )
 fprintf( 1, "[+] %s\n", opts.OutputFile )
 
 % Add the license.
-licenseText = fileread( fullfile( projectRoot, "LICENCE.txt" ) );
+licenseText = fileread( fullfile( projectRoot, "license.txt" ) );
 mlAddonSetLicense( char( opts.OutputFile ), ...
     struct( "type", 'BSD', "text", licenseText ) );
 

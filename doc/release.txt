@@ -1,4 +1,4 @@
-Unreleased
+Update Version 1.6.0
 - run/runCancellable: Message, Identifier and SuccessMessage options; progress is removed before the outcome is published; a failing completion callback fails the run
 - run/runCancellable take function arguments only via Args={...}
 - stack.invoke for UI callbacks; StatusManager.withStack/warning/reportError route library diagnostics to the active stack

@@ -1,7 +1,7 @@
 {
     "ToolboxName":"Status Manager",
     "ToolboxShortName":"StatusManager",
-    "ToolboxVersion":"1.5.0",
+    "ToolboxVersion":"1.6.0",
     "Identifier":"29f22bcb-48a2-43f5-96fb-f950112f2d4a",
     "Summary":"Enables developes to manage the status of their code, especially useful for producing app based workflow",
     "Description":"",
