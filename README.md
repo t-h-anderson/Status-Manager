@@ -16,13 +16,13 @@ Requires MATLAB release R2025a or newer.
 
 Install Status Manager directly from the MATLAB Add-On Explorer, or install the `.mltbx` file manually:
 
-1. Download `StatusManager 1.5.0.mltbx` from the [releases](releases/) folder.
+1. Download `StatusManager 1.6.0.mltbx` from the [releases](releases/) folder.
 2. Double-click the file in MATLAB to open the Add-On installer and follow the prompts.
 
 **Programmatic installation** — to pin a specific version as a dependency of another project, copy `src/installStatusManager.m` into that project's startup script:
 
 ```matlab
-installStatusManager(RequiredVersion="1.5.0", ToolboxPath="dependencies")
+installStatusManager(RequiredVersion="1.6.0", ToolboxPath="dependencies")
 ```
 
 ## Getting Started
