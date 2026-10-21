@@ -512,11 +512,12 @@ classdef tStack < matlab.unittest.TestCase
         end
 
         function tRunCatchWarningsFalseSkipsWarningStatus(testCase)
-            % With CatchWarnings=false, warnings raised inside fcn do not
-            % become Warning statuses on the stack.
+            % With CatchWarnings=false, warnings raised inside fcn reach
+            % the caller and do not become Warning statuses on the stack.
             S = statusMgr.Stack();
 
-            S.run(@() warning("test:w", "hi"), CatchWarnings=false);
+            testCase.verifyWarning( ...
+                @() S.run(@() warning("test:w", "hi"), CatchWarnings=false), "test:w")
 
             testCase.verifyEqual(S.CurrentStatus.Type, statusMgr.StatusType.Idle)
         end

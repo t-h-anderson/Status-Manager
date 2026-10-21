@@ -1,5 +1,5 @@
 function plan = buildfile()
-%BUILDFILE Chart Examples build file.
+%BUILDFILE Status Manager build file.
 
 % Copyright 2024-2025 The MathWorks, Inc.
 
@@ -12,22 +12,18 @@ plan.DefaultTasks = "package";
 % Add the clean task.
 plan("clean") = matlab.buildtool.tasks.CleanTask();
 
-% Add a test task to run the unit tests for the project. Generate and save
-% a coverage report.
-projectRoot = plan.RootFolder;
-testFolder = fullfile( projectRoot, "tbx", "charts", "tests" );
-codeFolder = fullfile( projectRoot, "tbx", "charts", "charts"  );
+% Add a test task to run the unit and integration tests, as CI does.
+% Results and coverage go to the (ignored) test artifacts folder.
+projectRoot = fileparts( plan.RootFolder );
+testFolder = fullfile( projectRoot, "test" );
+artifactsFolder = fullfile( testFolder, "artifacts" );
 plan("test") = matlab.buildtool.tasks.TestTask( testFolder, ...
     "Strict", true, ...
-    "RunOnlyImpactedTests", true, ...
-    "Description", "Assert that all impacted tests " + ...
-    "across the project pass.", ...
-    "SourceFiles", codeFolder, ...
-    "TestResults", "reports/Results.html", ...
-    "LoggingLevel", "Verbose", ...
-    "OutputDetail", "Verbose" );
-plan("test").addCodeCoverage( "reports/Coverage.html", ...
-    "MetricLevel", "mcdc" );
+    "Description", "Assert that all tests across the project pass.", ...
+    "SourceFiles", fullfile( projectRoot, "src" ), ...
+    "TestResults", fullfile( artifactsFolder, "Results.html" ), ...
+    "OutputDetail", "Concise" );
+plan("test").addCodeCoverage( fullfile( artifactsFolder, "Coverage.html" ) );
 
 % The test task depends on the check task.
 plan("test").Dependencies = "check";
@@ -116,46 +112,3 @@ mlAddonSetLicense( char( opts.OutputFile ), ...
     struct( "type", 'BSD', "text", licenseText ) );
 
 end % packageTask
-
-function activateLinks( file )
-%ACTIVATELINKS Convert the Live Script hyperlinks to JavaScript-enabled
-%links within the specified HTML file.
-
-arguments ( Input )
-    file(1, 1) string {mustBeFile}
-end % arguments ( Input )
-
-% Read the file contents.
-htmlFileContents = string( fileread( file ) );
-
-% Replace the commands within the anchors.
-
-% Extract the anchors.
-anchors = extractBetween( htmlFileContents, "<a href = ""matlab:", ">", ...
-    "Boundaries", "inclusive" );
-
-% Extract the commands.
-commands = extractBetween( anchors, """", """" );
-
-% Format the JavaScript-enabled anchors.
-replacementAnchors = "<a href = ""#"" onclick=""handleClick(" + ...
-    "'" + commands + "'" + "); return false;"">";
-
-% Replace the original anchors with the new anchors.
-for k = 1 : numel( anchors )
-    htmlFileContents = replace( htmlFileContents, ...
-        anchors(k), replacementAnchors(k) );
-end % for
-
-% Insert the JavaScript block.
-jsFile = fullfile( chartsRoot(), "app", "html", "activateLinks.js" );
-jsCode = fileread( jsFile );
-htmlFileContents = insertBefore( htmlFileContents, "</body>", ...
-    "<script type = ""text/javascript"">" + jsCode + "</script>" );
-
-% Replace the file contents.
-fileID = fopen( file, "w" );
-fprintf( fileID, "%s", htmlFileContents );
-fclose( fileID );
-
-end % activateLinks
